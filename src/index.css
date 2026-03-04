@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 250 95% 65%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 195 85% 70%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 280 85% 75%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 250 95% 65%;
+
+    --radius: 0.5rem;
+
+    /* Vibrant Dashboard Gradients */
+    --gradient-primary: linear-gradient(135deg, 250 95% 65%, 280 85% 75%);
+    --gradient-secondary: linear-gradient(135deg, 195 85% 70%, 220 90% 75%);
+    --gradient-accent: linear-gradient(135deg, 280 85% 75%, 320 80% 70%);
+    --gradient-success: linear-gradient(135deg, 120 60% 60%, 150 70% 65%);
+    --gradient-warning: linear-gradient(135deg, 45 95% 65%, 60 90% 70%);
+    --gradient-info: linear-gradient(135deg, 210 90% 70%, 240 80% 75%);
+
+    /* Vibrant Shadow Effects */
+    --shadow-primary: 0 10px 30px -10px hsl(250 95% 65% / 0.3);
+    --shadow-secondary: 0 10px 30px -10px hsl(195 85% 70% / 0.3);
+    --shadow-accent: 0 10px 30px -10px hsl(280 85% 75% / 0.3);
+    --shadow-glow: 0 0 40px hsl(250 95% 65% / 0.2);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Event Theme Colors */
+    --theme-wedding: 350 100% 88%;
+    --theme-corporate: 210 25% 65%;
+    --theme-birthday: 45 100% 70%;
+    --theme-conference: 225 25% 45%;
+    --theme-festival: 280 100% 75%;
+    --theme-social: 120 40% 70%;
+    --theme-networking: 195 80% 60%;
+    
+    /* User Type Colors */
+    --organizer: 260 100% 75%;
+    --planner: 180 50% 60%;
+    --hospitality: 30 80% 60%;
+    --venue: 140 60% 55%;
+    
+    /* Workflow Status Colors */
+    --status-planning: 35 100% 65%;
+    --status-progress: 210 100% 70%;
+    --status-review: 260 60% 70%;
+    --status-complete: 120 50% 50%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Event Theme Colors - Dark */
+    --theme-wedding: 350 70% 65%;
+    --theme-corporate: 210 20% 50%;
+    --theme-birthday: 45 80% 55%;
+    --theme-conference: 225 30% 40%;
+    --theme-festival: 280 70% 60%;
+    --theme-social: 120 30% 55%;
+    --theme-networking: 195 60% 50%;
+    
+    /* User Type Colors - Dark */
+    --organizer: 260 80% 60%;
+    --planner: 180 40% 50%;
+    --hospitality: 30 60% 50%;
+    --venue: 140 50% 45%;
+    
+    /* Workflow Status Colors - Dark */
+    --status-planning: 35 80% 55%;
+    --status-progress: 210 80% 60%;
+    --status-review: 260 50% 60%;
+    --status-complete: 120 40% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
