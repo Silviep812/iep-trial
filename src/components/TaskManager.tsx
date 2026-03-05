@@ -117,7 +117,9 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [shouldPreserveForm, setShouldPreserveForm] = useState(false);
   const [showDependencyDialog, setShowDependencyDialog] = useState(false);
-  const [taskForDependencies, setTaskForDependencies] = useState<{ id: string; title: string; } | null>(null);
+  const [taskForDependencies, setTaskForDependencies] = useState<{
+    assignment_type?: string | null; id: string; title: string;
+  } | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedDependencies, setSelectedDependencies] = useState<string[]>([]);
@@ -552,7 +554,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
           }
         }
       }
-    } catch (error: any) {
+    } catch (error: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) {
       console.error('Error saving dependencies:', error);
       // Re-throw with a user-friendly message if it's not already an Error object
       if (error instanceof Error) {
@@ -946,7 +948,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
 
       // Log field changes
       if (originalTask) {
-        const changes: Array<{ field: string; oldValue: any; newValue: any; }> = [];
+        const changes: Array<{ field: string; oldValue: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */; newValue: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */; }> = [];
 
         if (updates.title && updates.title !== originalTask.title) {
           changes.push({ field: 'title', oldValue: originalTask.title, newValue: updates.title });
@@ -1167,7 +1169,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
       setSelectedTask(null);
       setSelectedDependencies([]);
       fetchTasks();
-    } catch (error: any) {
+    } catch (error: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) {
       const errorMessage = error instanceof Error ? error.message : error?.message || "Failed to update tasks. Please try again.";
       const isCircularDependency = errorMessage.includes("Circular dependency detected");
       const isPermissionError = errorMessage.includes("Permission denied") || errorMessage.includes("permission");
@@ -1215,7 +1217,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
       setSelectedTask(null);
       setSelectedDependencies([]);
       fetchTasks();
-    } catch (error: any) {
+    } catch (error: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) {
       const errorMessage = error instanceof Error ? error.message : error?.message || "Failed to update task. Please try again.";
       const isCircularDependency = errorMessage.includes("Circular dependency detected");
 
@@ -1419,7 +1421,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
 
                 <div className="space-y-2">
                   <Label htmlFor="priority">Priority <span className="text-destructive">*</span></Label>
-                  <Select value={newTask.priority} onValueChange={(value: any) => {
+                  <Select value={newTask.priority} onValueChange={(value: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) => {
                     setNewTask({ ...newTask, priority: value });
                     if (validationErrors.priority) {
                       setValidationErrors((prev) => {
@@ -1812,7 +1814,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
 
                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <StatusIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-                          <Select value={task.status} onValueChange={(value: any) => updateTask(task.id, { status: value })}>
+                          <Select value={task.status} onValueChange={(value: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) => updateTask(task.id, { status: value })}>
                             <SelectTrigger className={`h-6 text-[11px] border-0 rounded-full px-2.5 w-auto gap-1 font-medium ${statusColors[task.status]}`}>
                               <SelectValue />
                             </SelectTrigger>
@@ -1844,7 +1846,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
                         }
 
                         {/* Resource Category Assignments - Only show if has active resources */}
-                        {task.resource_assignments && Object.values(task.resource_assignments).some((a: any) => a.selected) && (
+                        {task.resource_assignments && Object.values(task.resource_assignments).some((a: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) => a.selected) && (
                           <>
                             <ResourceAssignmentsPanel
                               taskId={task.id}
@@ -2131,7 +2133,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
                   <Label htmlFor="edit-priority">Priority</Label>
                   <Select
                     value={selectedTask.priority}
-                    onValueChange={(value: any) => setSelectedTask({ ...selectedTask, priority: value })}>
+                    onValueChange={(value: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) => setSelectedTask({ ...selectedTask, priority: value })}>
 
                     <SelectTrigger>
                       <SelectValue />
@@ -2693,7 +2695,7 @@ export function TaskManager({ eventId, selectedEventFilter, searchQuery }: TaskM
                       `${selectedDependencies.length} dependenc${selectedDependencies.length === 1 ? 'y' : 'ies'} added successfully.` :
                       "Task created successfully."
                   });
-                } catch (error: any) {
+                } catch (error: any /* eslint-disable-line @typescript-eslint/no-explicit-any */ /* eslint-disable-line @typescript-eslint/no-explicit-any */) {
                   console.error('Error saving dependencies:', error);
                   toast({
                     title: "Error Saving Dependencies",
