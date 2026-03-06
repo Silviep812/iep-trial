@@ -39,6 +39,10 @@ import ChangeRequests from "./pages/ChangeRequests";
 import ChangeRequestDetail from "./pages/ChangeRequestDetail";
 import Marketing from "./pages/Marketing";
 import ResourceExplorer from "./pages/ResourceExplorer";
+import CMTimelinePlanner from "./pages/CMTimelinePlanner";
+import CMResourceAllocation from "./pages/CMResourceAllocation";
+import CMAnalytics from "./pages/CMAnalytics";
+import CMVerification from "./pages/CMVerification";
 
 const queryClient = new QueryClient();
 
@@ -69,6 +73,10 @@ const App = () => (
               <Route path="reports" element={<Reports />} />
               <Route path="change-requests" element={<ChangeRequests />} />
               <Route path="change-requests/:id" element={<ChangeRequestDetail />} />
+              <Route path="cm-timeline" element={<CMTimelinePlanner />} />
+              <Route path="cm-resources" element={<CMResourceAllocation />} />
+              <Route path="cm-analytics" element={<CMAnalytics />} />
+              <Route path="cm-verification" element={<CMVerification />} />
               <Route path="notification" element={<Notifications />} />
               <Route path="comments" element={<Comments />} />
               <Route path="bookings" element={<BookingsDirectory />} />

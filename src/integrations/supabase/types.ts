@@ -810,6 +810,7 @@ export type Database = {
           created_at: string
           description: string | null
           email: string | null
+          entertainment_directory_id: number | null
           ent_type_id: number | null
           id: string
           instagram_url: string | null
@@ -828,6 +829,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           email?: string | null
+          entertainment_directory_id?: number | null
           ent_type_id?: number | null
           id?: string
           instagram_url?: string | null
@@ -846,6 +848,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           email?: string | null
+          entertainment_directory_id?: number | null
           ent_type_id?: number | null
           id?: string
           instagram_url?: string | null
@@ -858,6 +861,13 @@ export type Database = {
           zip?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "entertainment_profiles_directory_id_fkey"
+            columns: ["entertainment_directory_id"]
+            isOneToOne: false
+            referencedRelation: "Entertainment Directory"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "entertainment_profiles_ent_type_id_fkey"
             columns: ["ent_type_id"]
@@ -1003,8 +1013,8 @@ export type Database = {
           event_vend_contact_name?: string | null
           event_vend_contact_nbr?: number | null
           event_vend_cost?:
-            | Database["public"]["Enums"]["budget_category"]
-            | null
+          | Database["public"]["Enums"]["budget_category"]
+          | null
           event_vend_email?: string | null
           event_vend_end_date?: string | null
           event_vend_location?: string | null
@@ -1056,8 +1066,8 @@ export type Database = {
           event_vend_contact_name?: string | null
           event_vend_contact_nbr?: number | null
           event_vend_cost?:
-            | Database["public"]["Enums"]["budget_category"]
-            | null
+          | Database["public"]["Enums"]["budget_category"]
+          | null
           event_vend_email?: string | null
           event_vend_end_date?: string | null
           event_vend_location?: string | null
@@ -3249,8 +3259,8 @@ export type Database = {
           event_id: string | null
           id: string
           permission_level:
-            | Database["public"]["Enums"]["permission_level"]
-            | null
+          | Database["public"]["Enums"]["permission_level"]
+          | null
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
         }
@@ -3259,8 +3269,8 @@ export type Database = {
           event_id?: string | null
           id?: string
           permission_level?:
-            | Database["public"]["Enums"]["permission_level"]
-            | null
+          | Database["public"]["Enums"]["permission_level"]
+          | null
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
         }
@@ -3269,8 +3279,8 @@ export type Database = {
           event_id?: string | null
           id?: string
           permission_level?:
-            | Database["public"]["Enums"]["permission_level"]
-            | null
+          | Database["public"]["Enums"]["permission_level"]
+          | null
           role?: Database["public"]["Enums"]["app_role"]
           user_id?: string
         }
@@ -4135,26 +4145,26 @@ export type Database = {
         Returns: undefined
       }
       recalculate_downstream_tasks:
-        | {
-            Args: { p_new_due_date?: string; p_task_id: string }
-            Returns: {
-              new_due_date: string
-              old_due_date: string
-              task_id: string
-            }[]
-          }
-        | {
-            Args: {
-              p_new_due_date: string
-              p_original_due_date: string
-              p_task_id: string
-            }
-            Returns: {
-              new_due_date: string
-              old_due_date: string
-              task_id: string
-            }[]
-          }
+      | {
+        Args: { p_new_due_date?: string; p_task_id: string }
+        Returns: {
+          new_due_date: string
+          old_due_date: string
+          task_id: string
+        }[]
+      }
+      | {
+        Args: {
+          p_new_due_date: string
+          p_original_due_date: string
+          p_task_id: string
+        }
+        Returns: {
+          new_due_date: string
+          old_due_date: string
+          task_id: string
+        }[]
+      }
       recalculate_project_timeline: {
         Args: { p_event_id: string }
         Returns: {
@@ -4178,52 +4188,52 @@ export type Database = {
     }
     Enums: {
       app_role:
-        | "host"
-        | "organizer"
-        | "event_planner"
-        | "venue_owner"
-        | "hospitality_provider"
-        | "manager"
-        | "partner"
-        | "sponsor"
-        | "stakeholder"
-        | "venue_manager"
+      | "host"
+      | "organizer"
+      | "event_planner"
+      | "venue_owner"
+      | "hospitality_provider"
+      | "manager"
+      | "partner"
+      | "sponsor"
+      | "stakeholder"
+      | "venue_manager"
       budget_category:
-        | "venue"
-        | "catering"
-        | "entertainment"
-        | "decorations"
-        | "transportation"
-        | "marketing"
-        | "supplies"
-        | "services"
-        | "other"
-        | "hospitality"
-        | "misc"
-        | "vendors"
+      | "venue"
+      | "catering"
+      | "entertainment"
+      | "decorations"
+      | "transportation"
+      | "marketing"
+      | "supplies"
+      | "services"
+      | "other"
+      | "hospitality"
+      | "misc"
+      | "vendors"
       change_status:
-        | "pending"
-        | "approved"
-        | "rejected"
-        | "applied"
-        | "cancelled"
+      | "pending"
+      | "approved"
+      | "rejected"
+      | "applied"
+      | "cancelled"
       change_type:
-        | "task_update"
-        | "event_update"
-        | "resource_update"
-        | "vendor_update"
-        | "workflow_update"
-        | "note"
-        | "budget"
+      | "task_update"
+      | "event_update"
+      | "resource_update"
+      | "vendor_update"
+      | "workflow_update"
+      | "note"
+      | "budget"
       event_status_enum: "pending" | "in_progress" | "completed" | "cancelled"
       permission_level: "admin" | "coordinator" | "viewer"
       task_priority: "low" | "medium" | "high" | "urgent"
       task_status:
-        | "not_started"
-        | "in_progress"
-        | "completed"
-        | "on_hold"
-        | "cancelled"
+      | "not_started"
+      | "in_progress"
+      | "completed"
+      | "on_hold"
+      | "cancelled"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4237,116 +4247,116 @@ type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+  | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+  ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+    DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+    DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
       Row: infer R
     }
-    ? R
-    : never
+  ? R
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
-      }
-      ? R
-      : never
-    : never
+    DefaultSchema["Views"])
+  ? (DefaultSchema["Tables"] &
+    DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+      Row: infer R
+    }
+  ? R
+  : never
+  : never
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["Tables"]
+  | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
-    }
-    ? I
-    : never
+    Insert: infer I
+  }
+  ? I
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
-      }
-      ? I
-      : never
-    : never
+  ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    Insert: infer I
+  }
+  ? I
+  : never
+  : never
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["Tables"]
+  | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
-    }
-    ? U
-    : never
+    Update: infer U
+  }
+  ? U
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
-      }
-      ? U
-      : never
-    : never
+  ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    Update: infer U
+  }
+  ? U
+  : never
+  : never
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["Enums"]
+  | { schema: keyof DatabaseWithoutInternals },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+  : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
+  ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+  : never
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["CompositeTypes"]
+  | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+  : never = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never
+  ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+  : never
 
 export const Constants = {
   public: {

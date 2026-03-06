@@ -21,6 +21,10 @@ import {
   Truck,
   Car,
   GitPullRequest,
+  CalendarCheck,
+  Users2,
+  BarChart2,
+  ShieldCheck,
   Store
 } from "lucide-react";
 import { usePermissions } from "@/lib/permissions";
@@ -125,6 +129,34 @@ const menuGroups = [
         title: "Change Requests",
         url: "/dashboard/change-requests",
         icon: GitPullRequest,
+        color: "text-teal-600",
+        hoverColor: "hover:bg-teal-50"
+      },
+      {
+        title: "Timeline Planner",
+        url: "/dashboard/cm-timeline",
+        icon: CalendarCheck,
+        color: "text-teal-600",
+        hoverColor: "hover:bg-teal-50"
+      },
+      {
+        title: "Resource Allocation",
+        url: "/dashboard/cm-resources",
+        icon: Users2,
+        color: "text-teal-600",
+        hoverColor: "hover:bg-teal-50"
+      },
+      {
+        title: "CM Analytics",
+        url: "/dashboard/cm-analytics",
+        icon: BarChart2,
+        color: "text-teal-600",
+        hoverColor: "hover:bg-teal-50"
+      },
+      {
+        title: "DB Verification",
+        url: "/dashboard/cm-verification",
+        icon: ShieldCheck,
         color: "text-teal-600",
         hoverColor: "hover:bg-teal-50"
       }
@@ -267,7 +299,7 @@ export function AppSidebar() {
   const { userRoles } = useAuth();
 
   const isActive = (path: string) => currentPath === path;
-  
+
   const getNavClass = (item: any, isActive: boolean) => {
     const baseClasses = "transition-all duration-200 rounded-lg mx-2 my-1";
     if (isActive) {
@@ -313,7 +345,7 @@ export function AppSidebar() {
             </p>
           </div>
         )}
-        
+
         {getFilteredMenuGroups().map((group) => (
           <SidebarGroup key={group.title} className="mb-4">
             {!collapsed && (
@@ -327,8 +359,8 @@ export function AppSidebar() {
                   .map((item) => (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild>
-                        <NavLink 
-                          to={item.url} 
+                        <NavLink
+                          to={item.url}
                           className={({ isActive }) => getNavClass(item, isActive)}
                         >
                           <item.icon className={`h-5 w-5 ${collapsed ? 'mx-auto' : 'mr-3'} transition-colors duration-200`} />
@@ -343,7 +375,7 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
         ))}
-        
+
         {collapsed && (
           <div className="mt-auto px-2">
             <div className="h-8 w-8 rounded-full bg-gradient-to-r from-primary to-secondary mx-auto" />
