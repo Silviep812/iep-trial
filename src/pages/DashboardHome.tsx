@@ -31,27 +31,25 @@ const DashboardHome = () => {
     const fetchDashboardAnalytics = async () => {
       try {
         setLoading(true);
-        
+
         // Get current user
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('User not authenticated');
 
         const userId = user.id as string;
 
-        // Fetch events data for current user only
+        // Fetch events accessible to the current user (RLS handles owner + collaborator access)
         const { data: events, error: eventsError } = await supabase
           .from('events')
           .select('id, user_id, title, description, start_date, created_at')
-          .eq('user_id', userId)
           .order('created_at', { ascending: false })
           .limit(10);
         if (eventsError) throw eventsError;
 
-        // Fetch tasks data for current user only
+        // Fetch tasks accessible to the current user (RLS handles owner + assigned tasks)
         const { data: tasks, error: tasksError } = await supabase
           .from('tasks')
-          .select('*')
-          .eq('created_by', userId);
+          .select('*');
         if (tasksError) throw tasksError;
 
         // Get all event IDs for this user
@@ -126,11 +124,10 @@ const DashboardHome = () => {
           .order('created_at', { ascending: false })
           .limit(15);
 
-        // 2. Fetch recent budget item creations for the user's events
+        // Fetch events for the activity feed (RLS handles scoping)
         const { data: userEvents } = await supabase
           .from('events')
-          .select('id, title')
-          .eq('user_id', user.id);
+          .select('id, title');
 
         const userEventIds = (userEvents || []).map(e => e.id);
         const eventTitleMap: Record<string, string> = {};
@@ -199,7 +196,7 @@ const DashboardHome = () => {
         if (changeLogs && changeLogs.length > 0) {
           const budgetItemIds = changeLogs.filter(log => log.entity_type === 'budget_item').map(log => log.entity_id).filter(Boolean);
           const taskIds = changeLogs.filter(log => log.entity_type === 'task').map(log => log.entity_id).filter(Boolean);
-          
+
           if (budgetItemIds.length > 0) {
             const { data: budgetItems } = await supabase.from('budget_items').select('id, event_id').in('id', budgetItemIds);
             (budgetItems || []).forEach(item => { changeLogEventMap[item.id] = item.event_id; });
@@ -219,7 +216,7 @@ const DashboardHome = () => {
                 if (!dateStr) return '';
                 const d = new Date(dateStr);
                 if (isNaN(d.getTime())) return dateStr;
-                return `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}/${d.getFullYear()}`;
+                return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
               };
               description = `${log.entity_type} ${log.field_name.replace('_', ' ')} changed from "${formatDate(log.old_value)}" to "${formatDate(log.new_value)}"`;
             } else if (log.field_name && log.old_value && log.new_value) {
@@ -455,24 +452,24 @@ const DashboardHome = () => {
             </CardHeader>
             <CardContent className="relative">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full justify-start bg-gradient-primary bg-opacity-10 border-primary/20 hover:text-white transition-all duration-300"
                   onClick={() => window.location.href = '/dashboard/create-event'}
                 >
                   <Calendar className="mr-2 h-4 w-4" />
                   Schedule New Event
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full justify-start bg-gradient-secondary bg-opacity-10 border-secondary/20 hover:text-white transition-all duration-300"
                   onClick={() => window.location.href = '/dashboard/collaborate'}
                 >
                   <Users className="mr-2 h-4 w-4" />
                   Manage Team
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full justify-start bg-gradient-accent bg-opacity-10 border-accent/20 hover:text-white transition-all duration-300"
                   onClick={() => window.location.href = '/dashboard/analytics'}
                 >
@@ -485,7 +482,7 @@ const DashboardHome = () => {
         </TabsContent>
 
         <TabsContent value="analytics">
-          <Analytics 
+          <Analytics
             onInteractionTrack={(interaction) => {
               console.log('Dashboard analytics interaction:', interaction);
             }}
@@ -512,7 +509,7 @@ const DashboardHome = () => {
                       analytics: 'bg-primary',
                       resource: 'bg-accent'
                     };
-                    
+
                     const getRelativeTime = (timestamp: string) => {
                       const now = new Date();
                       const then = new Date(timestamp);
@@ -520,7 +517,7 @@ const DashboardHome = () => {
                       const diffMins = Math.floor(diffMs / 60000);
                       const diffHours = Math.floor(diffMs / 3600000);
                       const diffDays = Math.floor(diffMs / 86400000);
-                      
+
                       if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
                       if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
                       return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;

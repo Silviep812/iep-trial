@@ -23,7 +23,6 @@ export function useEventFilter() {
         const { data, error } = await supabase
           .from('events')
           .select('id, title, start_date')
-          .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
         if (error) throw error;
@@ -51,8 +50,7 @@ export function useEventFilter() {
           {
             event: '*',
             schema: 'public',
-            table: 'events',
-            filter: `user_id=eq.${user.id}`
+            table: 'events'
           },
           () => {
             fetchUserEvents();

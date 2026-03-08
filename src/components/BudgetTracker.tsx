@@ -145,9 +145,7 @@ export function BudgetTracker({ eventId, selectedEventFilter, searchQuery }: Bud
     try {
       if (!currentEventId) { setEventBudget(null); return; }
       if (currentEventId === "all") {
-        const { data: { user: u } } = await supabase.auth.getUser();
-        if (!u) { setEventBudget(null); return; }
-        const { data } = await supabase.from('events').select('budget').eq('user_id', u.id);
+        const { data } = await supabase.from('events').select('budget');
         const total = data?.reduce((s, e) => s + (e.budget || 0), 0) || 0;
         setEventBudget(total > 0 ? total : null);
         return;

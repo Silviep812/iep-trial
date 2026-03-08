@@ -94,13 +94,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUp = async (email: string, password: string) => {
     const redirectUrl = `${window.location.origin}/dashboard`;
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: redirectUrl,
       },
     });
+
+    // If email confirmation is disabled in Supabase, the user session is
+    // returned immediately — treat this as a successful sign-in.
+    if (!error && data.session) {
+      return { error: null };
+    }
+
+    // If Supabase can't send the confirmation email, try signing in directly.
+    // This helps when "Confirm email" is OFF but the SMTP service is broken.
+    if (error?.code === "unexpected_failure" || error?.message?.includes("confirmation email")) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (!signInError) return { error: null }; // existing user logged in successfully
+    }
+
     return { error };
   };
 

@@ -213,16 +213,14 @@ const ManageEvent = () => {
       // First, check if user has any events at all (for showing/hiding filters)
       const { count: totalCount } = await supabase
         .from('events')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
+        .select('*', { count: 'exact', head: true });
 
       setHasEventsInDb((totalCount || 0) > 0);
 
       // Build query with database-level filtering
       let query = supabase
         .from('events')
-        .select('*')
-        .eq('user_id', user.id);
+        .select('*');
 
       // Filter by status at database level
       if (!statusFilters.includes('all')) {
@@ -267,7 +265,6 @@ const ManageEvent = () => {
               .from('events')
               .select('*')
               .eq('id', selectedEvent.id)
-              .eq('user_id', user.id)
               .single();
 
             if (!selectedError && selectedEventData) {

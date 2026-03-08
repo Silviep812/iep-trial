@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { EventAccessGuard } from "@/components/EventAccessGuard";
 import { WorkflowDashboard as WorkflowDashboardComponent } from "@/components/workflow/WorkflowDashboard";
 import { WorkflowSelector } from "@/components/workflow/WorkflowSelector";
 import { EventSelector } from "@/components/workflow/EventSelector";
@@ -190,6 +191,11 @@ export default function WorkflowDashboard() {
     );
   }
 
+  // The eventId from URL params is the primary attack surface:
+  // someone could paste another user's event ID and try to access its workflow.
+  // EventAccessGuard checks RLS and shows Access Denied if blocked.
+  const urlEventId = searchParams.get('eventId') || null;
+
   const handleEventSelection = async (eventId: string) => {
     setSelectedEvent(eventId);
 
@@ -320,137 +326,139 @@ export default function WorkflowDashboard() {
 
   if (workflows.length === 0 || isCreatingWorkflow) {
     return (
-      <div className="min-h-screen bg-background p-6">
-        <div className="max-w-6xl mx-auto space-y-6">
-          {currentStep !== "dashboard" && currentStep !== null && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    {currentStep !== "event" && (
-                      <Button variant="ghost" size="sm" onClick={handleBack}>
-                        <ArrowLeft className="h-4 w-4 mr-2" />
-                        Back
-                      </Button>
+      <EventAccessGuard eventId={urlEventId}>
+        <div className="min-h-screen bg-background p-6">
+          <div className="max-w-6xl mx-auto space-y-6">
+            {currentStep !== "dashboard" && currentStep !== null && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {currentStep !== "event" && (
+                        <Button variant="ghost" size="sm" onClick={handleBack}>
+                          <ArrowLeft className="h-4 w-4 mr-2" />
+                          Back
+                        </Button>
+                      )}
+                      <div>
+                        <CardTitle className="text-xl">
+                          {currentStep === "event" && "Select Your Event"}
+                          {currentStep === "user-type" && "Setup Your Workflow"}
+                          {currentStep === "theme" && "Choose Event Theme"}
+                          {currentStep === "hospitality" && "Select Hospitality Services"}
+                          {currentStep === "venue" && "Choose Venue Location"}
+                          {currentStep === "services" && "Choose Services"}
+                          {currentStep === "suppliers" && "Select External Vendors"}
+                        </CardTitle>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Step {
+                            currentStep === "event" ? "1" :
+                              currentStep === "user-type" ? "2" :
+                                currentStep === "theme" ? "3" :
+                                  currentStep === "hospitality" ? "4" :
+                                    currentStep === "venue" ? "5" :
+                                      currentStep === "services" ? "6" :
+                                        currentStep === "suppliers" ? "7" : "8"
+                          } of 8
+                        </p>
+                      </div>
+                    </div>
+                    {selectedUserType && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <CheckCircle2 className="h-4 w-4 text-primary" />
+                        <span className="capitalize">
+                          {selectedUserType.replace("-", " ")}
+                        </span>
+                      </div>
                     )}
-                    <div>
-                      <CardTitle className="text-xl">
-                        {currentStep === "event" && "Select Your Event"}
-                        {currentStep === "user-type" && "Setup Your Workflow"}
-                        {currentStep === "theme" && "Choose Event Theme"}
-                        {currentStep === "hospitality" && "Select Hospitality Services"}
-                        {currentStep === "venue" && "Choose Venue Location"}
-                        {currentStep === "services" && "Choose Services"}
-                        {currentStep === "suppliers" && "Select External Vendors"}
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Step {
-                          currentStep === "event" ? "1" :
-                            currentStep === "user-type" ? "2" :
-                              currentStep === "theme" ? "3" :
-                                currentStep === "hospitality" ? "4" :
-                                  currentStep === "venue" ? "5" :
-                                    currentStep === "services" ? "6" :
-                                      currentStep === "suppliers" ? "7" : "8"
-                        } of 8
-                      </p>
-                    </div>
                   </div>
-                  {selectedUserType && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <CheckCircle2 className="h-4 w-4 text-primary" />
-                      <span className="capitalize">
-                        {selectedUserType.replace("-", " ")}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div className="w-full bg-secondary rounded-full h-2 mt-4">
-                  <div
-                    className="bg-primary h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${getStepProgress()}%` }}
-                  />
-                </div>
-              </CardHeader>
-            </Card>
-          )}
-
-          {currentStep === null && (
-            <Card>
-              <CardContent className="flex flex-col items-center gap-4 p-6">
-                <p className="text-muted-foreground">No workflows found.</p>
-                <Button onClick={() => setCurrentStep("event")}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create Workflow
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          <div className="space-y-6">
-            {currentStep === "event" && (
-              <EventSelector
-                onSelectEvent={handleEventSelection}
-                selectedEvent={selectedEvent}
-              />
+                  <div className="w-full bg-secondary rounded-full h-2 mt-4">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${getStepProgress()}%` }}
+                    />
+                  </div>
+                </CardHeader>
+              </Card>
             )}
 
-            {currentStep === "user-type" && (
-              <WorkflowSelector
-                onSelectUserType={handleUserTypeSelection}
-                selectedUserType={selectedUserType}
-              />
+            {currentStep === null && (
+              <Card>
+                <CardContent className="flex flex-col items-center gap-4 p-6">
+                  <p className="text-muted-foreground">No workflows found.</p>
+                  <Button onClick={() => setCurrentStep("event")}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Workflow
+                  </Button>
+                </CardContent>
+              </Card>
             )}
 
-            {currentStep === "theme" && selectedUserType && (
-              <EventThemeSelector
-                userType={selectedUserType}
-                onSelectTheme={handleThemeSelection}
-                selectedTheme={selectedTheme}
-              />
-            )}
+            <div className="space-y-6">
+              {currentStep === "event" && (
+                <EventSelector
+                  onSelectEvent={handleEventSelection}
+                  selectedEvent={selectedEvent}
+                />
+              )}
 
-            {currentStep === "hospitality" && selectedUserType && selectedTheme && selectedUserType !== "venue-owner" && (
-              <HospitalitySelector
-                onSelectHospitality={handleHospitalitySelection}
-                selectedHospitality={selectedHospitality}
-              />
-            )}
+              {currentStep === "user-type" && (
+                <WorkflowSelector
+                  onSelectUserType={handleUserTypeSelection}
+                  selectedUserType={selectedUserType}
+                />
+              )}
 
-            {currentStep === "venue" && selectedUserType && selectedTheme && (
-              <VenueSelector
-                onSelectVenue={handleVenueSelection}
-                selectedVenue={selectedVenue}
-              />
-            )}
+              {currentStep === "theme" && selectedUserType && (
+                <EventThemeSelector
+                  userType={selectedUserType}
+                  onSelectTheme={handleThemeSelection}
+                  selectedTheme={selectedTheme}
+                />
+              )}
 
-            {currentStep === "services" && selectedUserType && selectedTheme && (
-              <ServiceSelector
-                onSelectServiceVendor={handleServiceVendorSelection}
-                onSelectServiceRental={handleServiceRentalSelection}
-                selectedServiceVendor={selectedServiceVendor}
-                selectedServiceRental={selectedServiceRental}
-              />
-            )}
+              {currentStep === "hospitality" && selectedUserType && selectedTheme && selectedUserType !== "venue-owner" && (
+                <HospitalitySelector
+                  onSelectHospitality={handleHospitalitySelection}
+                  selectedHospitality={selectedHospitality}
+                />
+              )}
 
-            {currentStep === "suppliers" && selectedUserType && selectedTheme && (selectedServiceVendor || selectedServiceRental) && (
-              <SupplierSelector
-                onSelectSupplier={handleSupplierSelection}
-                selectedSupplier={selectedSupplier}
-              />
-            )}
+              {currentStep === "venue" && selectedUserType && selectedTheme && (
+                <VenueSelector
+                  onSelectVenue={handleVenueSelection}
+                  selectedVenue={selectedVenue}
+                />
+              )}
 
-            {currentStep === "dashboard" && selectedUserType && selectedTheme && selectedSupplier && (
-              <WorkflowDashboardComponent
-                userType={selectedUserType}
-                selectedTheme={selectedTheme}
-                workflowId={workflowIdForEvent || undefined}
-                setCurrentStep={setCurrentStep}
-              />
-            )}
+              {currentStep === "services" && selectedUserType && selectedTheme && (
+                <ServiceSelector
+                  onSelectServiceVendor={handleServiceVendorSelection}
+                  onSelectServiceRental={handleServiceRentalSelection}
+                  selectedServiceVendor={selectedServiceVendor}
+                  selectedServiceRental={selectedServiceRental}
+                />
+              )}
+
+              {currentStep === "suppliers" && selectedUserType && selectedTheme && (selectedServiceVendor || selectedServiceRental) && (
+                <SupplierSelector
+                  onSelectSupplier={handleSupplierSelection}
+                  selectedSupplier={selectedSupplier}
+                />
+              )}
+
+              {currentStep === "dashboard" && selectedUserType && selectedTheme && selectedSupplier && (
+                <WorkflowDashboardComponent
+                  userType={selectedUserType}
+                  selectedTheme={selectedTheme}
+                  workflowId={workflowIdForEvent || undefined}
+                  setCurrentStep={setCurrentStep}
+                />
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      </EventAccessGuard>
     );
   }
 

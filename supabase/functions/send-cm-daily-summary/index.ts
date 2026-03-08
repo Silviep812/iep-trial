@@ -55,11 +55,12 @@ const handler = async (req: Request): Promise<Response> => {
 
         let recipientEmails: string[] = [];
         if (adminUserIds.length > 0) {
-            const { data: profiles } = await supabase
-                .from("profiles")
-                .select("id, email")
-                .in("id", adminUserIds);
-            recipientEmails = (profiles || []).map((p: any) => p.email).filter(Boolean);
+            // profiles table has no email column — email lives in auth.users
+            const { data: { users: authUsers } } = await supabase.auth.admin.listUsers();
+            recipientEmails = authUsers
+                .filter((u: any) => adminUserIds.includes(u.id))
+                .map((u: any) => u.email)
+                .filter(Boolean) as string[];
         }
 
         // Fallback: use env var if no recipients found
