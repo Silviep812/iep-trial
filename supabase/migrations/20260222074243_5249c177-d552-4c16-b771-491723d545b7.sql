@@ -1,1 +1,0 @@
-ALTER TYPE public.change_type ADD VALUE IF NOT EXISTS 'budget';

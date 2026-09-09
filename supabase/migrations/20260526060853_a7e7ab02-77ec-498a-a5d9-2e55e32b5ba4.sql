@@ -1,1 +1,0 @@
-UPDATE public.event_types SET theme_id = 4 WHERE id = 9 OR parent_id = 9;

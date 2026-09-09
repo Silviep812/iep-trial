@@ -1,1 +1,0 @@
-DELETE FROM event_types WHERE parent_id = 728 AND name IN ('Community Heritage','Cultural Heritage','Ethnic Heritage','Family Heritage','Historical Heritage');
