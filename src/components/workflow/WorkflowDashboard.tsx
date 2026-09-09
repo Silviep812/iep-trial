@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,13 +13,13 @@ import { useWorkflow } from "@/hooks/useWorkflow";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import {
-  Calendar,
-  MapPin,
-  Users,
-  DollarSign,
-  Clock,
-  CheckCircle2,
+import { 
+  Calendar, 
+  MapPin, 
+  Users, 
+  DollarSign, 
+  Clock, 
+  CheckCircle2, 
   AlertCircle,
   TrendingUp,
   Settings,
@@ -49,8 +48,12 @@ interface WorkflowDashboardProps {
   selectedTheme: number;
   workflowId?: string;
   setCurrentStep?: (step: SetupStep) => void;
+  /** When set (e.g. viewing dashboard without wizard state), opens the setup wizard with workflow data. */
+  onCustomizeWorkflow?: () => void | Promise<void>;
   onChangeWorkflow?: () => void;
   showChangeWorkflow?: boolean;
+  /** Start the wizard to attach a workflow to another event (one workflow per event). */
+  onNewWorkflowForAnotherEvent?: () => void;
 }
 
 interface WorkflowSelections {
@@ -60,6 +63,38 @@ interface WorkflowSelections {
   supplier: string;
   serviceVendor: string;
   serviceRental: string;
+}
+
+/** Matches the setup wizard: one "services" pick is vendor OR rental; venue-owner skips hospitality & venue. */
+function getWorkflowSelectionProgress(
+  userType: string,
+  selections: WorkflowSelections
+): { completed: number; total: number; percentage: number } {
+  const hasTheme = Boolean(selections.theme);
+  const hasHospitality = Boolean(selections.hospitality);
+  const hasVenue = Boolean(selections.venue);
+  const hasSupplier = Boolean(selections.supplier);
+  const hasServices = Boolean(selections.serviceVendor || selections.serviceRental);
+
+  if (userType === "venue-owner") {
+    const slots = [hasTheme, hasServices, hasSupplier];
+    const completed = slots.filter(Boolean).length;
+    const total = slots.length;
+    return {
+      completed,
+      total,
+      percentage: total > 0 ? (completed / total) * 100 : 0,
+    };
+  }
+
+  const slots = [hasTheme, hasHospitality, hasVenue, hasServices, hasSupplier];
+  const completed = slots.filter(Boolean).length;
+  const total = slots.length;
+  return {
+    completed,
+    total,
+    percentage: total > 0 ? (completed / total) * 100 : 0,
+  };
 }
 
 interface SelectionCard {
@@ -80,7 +115,7 @@ const workflowSteps: Record<string, WorkflowStep[]> = {
       priority: "high"
     },
     {
-      id: "2",
+      id: "2", 
       title: "Set Budget & Timeline",
       description: "Determine available budget and create event timeline",
       status: "not_started",
@@ -97,7 +132,7 @@ const workflowSteps: Record<string, WorkflowStep[]> = {
       id: "4",
       title: "Arrange Catering",
       description: "Select menu options and coordinate food service",
-      status: "not_started",
+      status: "not_started", 
       priority: "medium"
     }
   ],
@@ -110,7 +145,7 @@ const workflowSteps: Record<string, WorkflowStep[]> = {
       priority: "high"
     },
     {
-      id: "2",
+      id: "2", 
       title: "Set Budget & Timeline",
       description: "Determine available budget and create event timeline",
       status: "not_started",
@@ -127,7 +162,7 @@ const workflowSteps: Record<string, WorkflowStep[]> = {
       id: "4",
       title: "Arrange Catering",
       description: "Select menu options and coordinate food service",
-      status: "not_started",
+      status: "not_started", 
       priority: "medium"
     }
   ],
@@ -208,8 +243,8 @@ const workflowSteps: Record<string, WorkflowStep[]> = {
     },
     {
       id: "3",
-      title: "Technical Setup",
-      description: "Configure AV, lighting, and technical requirements",
+      title: "AV & lighting",
+      description: "Confirm sound, lighting, and staging setup for the room",
       status: "not_started",
       priority: "medium"
     },
@@ -251,7 +286,16 @@ const getPriorityColor = (priority: string) => {
   }
 };
 
-export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurrentStep, onChangeWorkflow, showChangeWorkflow }: WorkflowDashboardProps) => {
+export const WorkflowDashboard = ({
+  userType,
+  selectedTheme,
+  workflowId,
+  setCurrentStep,
+  onCustomizeWorkflow,
+  onChangeWorkflow,
+  showChangeWorkflow,
+  onNewWorkflowForAnotherEvent,
+}: WorkflowDashboardProps) => {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [eventTasks, setEventTasks] = useState<any[]>([]);
   const [selections, setSelections] = useState<WorkflowSelections>({
@@ -269,14 +313,12 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
   const [eventTitle, setEventTitle] = useState<string>("");
 
   const handleOpenTaskManager = async () => {
-    const workflowData = workflowId
+    const workflowData = workflowId 
       ? await getWorkflowById(workflowId)
       : await getWorkflowData();
 
-    console.log('workflowdata', workflowData)
-
     const eventId = workflowData?.event_id;
-
+    
     if (eventId) {
       navigate(`/dashboard/project-management?eventId=${eventId}&openModal=true`);
     } else {
@@ -285,21 +327,26 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
   };
 
   const handleCustomize = async () => {
-    const workflowData = workflowId
-      ? await getWorkflowById(workflowId)
-      : await getWorkflowData();
-
-    const eventId = workflowData?.event_id;
-
+    if (onCustomizeWorkflow) {
+      await onCustomizeWorkflow();
+      return;
+    }
     if (setCurrentStep) {
       setCurrentStep("user-type");
-    } else {
+      return;
+    }
+
+    const workflowData = workflowId ? await getWorkflowById(workflowId) : await getWorkflowData();
+    const eventId = workflowData?.event_id;
+    if (eventId) {
       navigate(`/dashboard/workflow-dashboard?eventId=${eventId}`);
+    } else {
+      navigate("/dashboard/workflow-dashboard");
     }
   };
 
   const refreshEventTasks = useCallback(async () => {
-    const workflowData = workflowId
+    const workflowData = workflowId 
       ? await getWorkflowById(workflowId)
       : await getWorkflowData();
 
@@ -321,11 +368,16 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
   }, [userType]);
 
   useEffect(() => {
+    window.addEventListener('focus', refreshEventTasks);
+    return () => window.removeEventListener('focus', refreshEventTasks);
+  }, [refreshEventTasks]);
+
+  useEffect(() => {
     const loadEventTasks = async () => {
-      const workflowData = workflowId
+      const workflowData = workflowId 
         ? await getWorkflowById(workflowId)
         : await getWorkflowData();
-
+        
       if (workflowData?.event_id) {
         const { data: tasks, error } = await supabase
           .from('tasks')
@@ -346,7 +398,7 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
 
   useEffect(() => {
     const loadWorkflowSelections = async () => {
-      const workflowData = workflowId
+      const workflowData = workflowId 
         ? await getWorkflowById(workflowId)
         : await getWorkflowData();
       if (workflowData) {
@@ -363,7 +415,7 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
         // Fetch theme name
         if (workflowData.theme_id) {
           const { data: theme } = await supabase
-            .from('event_themes')
+            .from('Themes Directory Catalog')
             .select('name')
             .eq('id', workflowData.theme_id)
             .limit(1)
@@ -371,7 +423,7 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
 
           if (theme) {
             // Find the matching theme field
-            const themeKeys = Object.keys(theme).filter(key =>
+            const themeKeys = Object.keys(theme).filter(key => 
               key !== 'created_at' && theme[key as keyof typeof theme]
             );
             newSelections.theme = theme.name || themeKeys[0];
@@ -392,7 +444,7 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
         // Fetch venue name
         if (workflowData.venue_id) {
           const { data: venue } = await supabase
-            .from('venue_profiles')
+            .from('venues')
             .select('business_name')
             .eq('id', workflowData.venue_id)
             .limit(1)
@@ -408,33 +460,33 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
             .eq('id', workflowData.supplier_id)
             .limit(1)
             .maybeSingle();
-          newSelections.supplier = supplier?.business_name || `Supplier ${workflowData.supplier_id}`;
+          newSelections.supplier = supplier?.business_name || `External vendor ${workflowData.supplier_id}`;
         }
 
         // Fetch service vendor name
-        if (workflowData.serv_vendor_sup_id) {
+        if (workflowData.serv_vendor_id) {
           const { data: serviceVendor } = await supabase
-            .from('serv_vendor_suppliers')
+            .from('vendor')
             .select('business_name')
-            .eq('id', workflowData.serv_vendor_sup_id)
+            .eq('id', workflowData.serv_vendor_id)
             .limit(1)
             .maybeSingle();
-          newSelections.serviceVendor = serviceVendor?.business_name || `Service Vendor ${workflowData.serv_vendor_sup_id}`;
+          newSelections.serviceVendor = serviceVendor?.business_name || `Service Vendor ${workflowData.serv_vendor_id}`;
         }
 
         // // Fetch service rental name
-        if (workflowData.serv_vendor_rent_id) {
+        if (workflowData.service_rental_buy_id) {
           const { data: serviceRental } = await supabase
-            .from('serv_vendor_rentals')
+            .from('service_rental_buy')
             .select('*')
-            .eq('id', workflowData.serv_vendor_rent_id)
+            .eq('id', workflowData.service_rental_buy_id)
             .limit(1)
             .maybeSingle();
           if (serviceRental) {
-            const rentalKeys = Object.keys(serviceRental).filter(key =>
+            const rentalKeys = Object.keys(serviceRental).filter(key => 
               key !== 'rental_type_id' && key !== 'created_at' && serviceRental[key]
             );
-            newSelections.serviceRental = serviceRental?.business_name || `Service Rental ${workflowData.serv_vendor_rent_id}`;
+            newSelections.serviceRental = serviceRental?.business_name || `Service Rental ${workflowData.service_rental_buy_id}`;
           }
         }
 
@@ -470,10 +522,8 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
   const now = new Date();
   const upcomingDeadlines = eventTasks.filter(task => task.due_date && new Date(task.due_date) > now).length;
 
-  // Calculate overall progress based on workflow selections made
-  const selectionKeys = Object.keys(selections);
-  const selectionsMade = selectionKeys.filter(key => selections[key as keyof WorkflowSelections]).length;
-  const overallProgressPercentage = selectionKeys.length > 0 ? (selectionsMade / selectionKeys.length) * 100 : 0;
+  const { completed: selectionsMade, total: selectionTotal, percentage: overallProgressPercentage } =
+    getWorkflowSelectionProgress(userType, selections);
 
   const stats = [
     {
@@ -502,16 +552,42 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
         <div>
           <h1 className="text-3xl font-bold">{"Workflow Dashboard - " + eventTitle}</h1>
           <p className="text-muted-foreground">
-            {userType.replace("-", " ").replace(/\b\w/g, l => l.toUpperCase())}
+            {userType.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
           </p>
+          {selections.theme ? (
+            <p className="text-sm text-foreground/90 mt-1 max-w-2xl">
+              Active theme: <span className="font-medium">{selections.theme}</span>. Tasks, progress, and resource picks on this page follow this workflow&apos;s event and theme.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+              Use Customize to set your theme and categories so vendor and service selections stay aligned with this event.
+            </p>
+          )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {onNewWorkflowForAnotherEvent && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onNewWorkflowForAnotherEvent}
+              title="Pick an event that does not have a workflow yet"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">New workflow for another event</span>
+              <span className="sm:hidden">New workflow</span>
+            </Button>
+          )}
           {showChangeWorkflow && (
             <Button variant="outline" size="sm" onClick={onChangeWorkflow || (() => navigate('/dashboard/select-workflow'))}>
               Change Workflow
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={handleCustomize}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCustomize}
+            title="Edit workflow setup: role, theme, venue, services, and vendors"
+          >
             <Settings className="h-4 w-4 mr-2" />
             Customize
           </Button>
@@ -536,7 +612,7 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
             </div>
             <Progress value={overallProgressPercentage} className="w-full" />
             <div className="text-xs text-muted-foreground mt-2">
-              {selectionsMade} of {selectionKeys.length} selections completed
+              {selectionsMade} of {selectionTotal} required selections completed
             </div>
           </div>
         </CardContent>
@@ -575,8 +651,8 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
                 },
                 {
                   type: "supplier",
-                  title: "External Vendor",
-                  description: "Supplies and materials provider",
+                  title: "External vendor",
+                  description: "External vendor for supplies and materials",
                   value: selections.supplier || "Not selected",
                   icon: Package,
                 },
@@ -598,7 +674,7 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
 
               return selectionCards.map((card) => {
                 const IconComponent = card.icon;
-
+                
                 return (
                   <Card key={card.type} className={`relative`}>
                     <CardHeader className="pb-3">
@@ -670,8 +746,8 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-2">
-                        <Badge
-                          variant="outline"
+                        <Badge 
+                          variant="outline" 
                           className={getPriorityColor(step.priority)}
                         >
                           {step.priority.toUpperCase()}
@@ -684,8 +760,8 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
                       <Badge className={getStatusColor(step.status)}>
                         {step.status.toUpperCase().replace("_", " ")}
                       </Badge>
-                      <Button
-                        size="sm"
+                      <Button 
+                        size="sm" 
                         onClick={handleOpenTaskManager}
                         variant="outline"
                       >
@@ -734,8 +810,8 @@ export const WorkflowDashboard = ({ userType, selectedTheme, workflowId, setCurr
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-2">
-                          <Badge
-                            variant="outline"
+                          <Badge 
+                            variant="outline" 
                             className={getPriorityColor(task.priority || "medium")}
                           >
                             {(task.priority || "medium").toUpperCase()}

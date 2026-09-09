@@ -2,154 +2,196 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Truck, Camera, Lightbulb, Music, Gamepad2, Flower, Home, Table, Mail, Phone } from "lucide-react";
+import { Truck, Camera, Lightbulb, Music, Gamepad2, Flower, Home, Table, Mail } from "lucide-react";
+import { DirectoryPageHeader } from "@/components/resource-directory/DirectoryPageHeader";
+import { AddDirectoryEntryDialog } from "@/components/resource-directory/AddDirectoryEntryDialog";
+import { useToast } from "@/hooks/use-toast";
+import { commentsPlannerCopy } from "@/lib/nudges";
+import { formatDirectoryPrice } from "@/lib/formatDirectoryPrice";
+import { DirectoryProfileLink } from "@/components/resource-directory/DirectoryProfileLink";
+import { directoryProfileElementId } from "@/lib/directoryProfileLinks";
+import { useDirectoryProfileHighlight } from "@/hooks/useDirectoryProfileHighlight";
+import {
+  LocationFilterInput,
+  collectLocationOptions,
+  matchesLocationFilter,
+} from "@/components/resource-directory/LocationFilterInput";
 
+/**
+ * Equipment / Vendor Service Rental-Buy directory.
+ * Profiles come from `service_rental_buy`; types from `vendor_rental_types`
+ * via `service_rental_buy_assignments` (not the personnel `vendor` table).
+ */
 const VendorServiceDirectory = () => {
-  const [serviceTypes, setServiceTypes] = useState<any[]>([]);
-  const [serviceProfiles, setServiceProfiles] = useState<any[]>([]);
-  const [selectedServiceTypes, setSelectedServiceTypes] = useState<string[]>([]);
+  const [rentalTypes, setRentalTypes] = useState<{ id: number; name: string }[]>([]);
+  const [rentals, setRentals] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<
+    { service_rental_buy_id: string | null; vendor_rental_type_id: number | null }[]
+  >([]);
+  const [selectedRentalTypes, setSelectedRentalTypes] = useState<string[]>([]);
   const [locationFilter, setLocationFilter] = useState("");
+  /** Real locations recorded in this directory, offered as searchable filter choices. */
+  const locationOptions = useMemo(() => collectLocationOptions(rentals), [rentals]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+  const { rentalHighlightClass } = useDirectoryProfileHighlight(loading);
 
-  // Fetch service types and profiles from Supabase
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Fetch service types
-        const { data: typesData, error: typesError } = await supabase
-          .from('vendor_rental_types')
-          .select('*');
-
-        if (typesError) throw typesError;
-
-        // Fetch service profiles with their assignments and types
-        const { data: profilesData, error: profilesError } = await supabase
-          .from('serv_vendor_rentals')
-          .select(`
-            *,
-            serv_vendor_rental_assignments(
-              vendor_rental_types(*)
-            )
-          `);
-
-        if (profilesError) throw profilesError;
-
-        setServiceTypes(typesData || []);
-        setServiceProfiles(profilesData || []);
-      } catch (err: any) {
-        console.error('Error fetching data:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [typesRes, rentalsRes, assignRes] = await Promise.all([
+        supabase.from("vendor_rental_types").select("id, name").order("name"),
+        supabase.from("service_rental_buy").select("*").order("business_name"),
+        supabase.from("service_rental_buy_assignments").select("service_rental_buy_id, vendor_rental_type_id"),
+      ]);
+      if (typesRes.error) console.error("vendor_rental_types:", typesRes.error);
+      if (rentalsRes.error) {
+        console.error("service_rental_buy:", rentalsRes.error);
+        toast({ title: "Rental profiles", description: commentsPlannerCopy.toastGeneric, variant: "destructive" });
       }
-    };
+      if (assignRes.error) console.error("service_rental_buy_assignments:", assignRes.error);
+      setRentalTypes(typesRes.data || []);
+      setRentals(rentalsRes.data || []);
+      setAssignments(assignRes.data || []);
+    } catch (err) {
+      console.error("Error fetching rental directory:", err);
+      toast({ title: "Error", description: "Failed to load vendor service rental directory.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
+  useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
-  // Filter profiles based on selected service types and location
-  const filteredProfiles = serviceProfiles.filter(profile => {
-    const matchesType = selectedServiceTypes.length === 0 || 
-      (profile.serv_vendor_rental_assignments && profile.serv_vendor_rental_assignments.length > 0 &&
-        profile.serv_vendor_rental_assignments.some((assignment: any) => 
-          selectedServiceTypes.includes(assignment.vendor_rental_types?.id?.toString())
-        ));
-    
-    const matchesLocation = !locationFilter || 
-      profile.city?.toLowerCase().includes(locationFilter.toLowerCase()) ||
-      profile.state?.toLowerCase().includes(locationFilter.toLowerCase()) ||
-      profile.zip?.toString().includes(locationFilter);
-    
+  const typeIdsForRental = useCallback(
+    (rentalId: string) =>
+      assignments
+        .filter((a) => a.service_rental_buy_id === rentalId)
+        .map((a) => a.vendor_rental_type_id)
+        .filter((id): id is number => id != null),
+    [assignments],
+  );
+
+  const displayTypes = useMemo(() => {
+    if (rentalTypes.length > 0) return rentalTypes;
+    const map = new Map<number, string>();
+    for (const a of assignments) {
+      if (a.vendor_rental_type_id == null) continue;
+      if (!map.has(a.vendor_rental_type_id)) {
+        map.set(a.vendor_rental_type_id, `Rental type (${a.vendor_rental_type_id})`);
+      }
+    }
+    return [...map.entries()].map(([id, name]) => ({ id, name }));
+  }, [rentalTypes, assignments]);
+
+  const filteredProfiles = rentals.filter((profile) => {
+    const typeIds = typeIdsForRental(profile.id).map(String);
+    const matchesType =
+      selectedRentalTypes.length === 0 || selectedRentalTypes.some((t) => typeIds.includes(t));
+    const matchesLocation = matchesLocationFilter(profile, locationFilter);
     return matchesType && matchesLocation;
   });
 
-  // Get icon for service type
   const getServiceIcon = (typeName: string) => {
-    const iconMap: { [key: string]: any } = {
-      'transport': Truck,
-      'photo': Camera,
-      'lighting': Lightbulb,
-      'audio': Music,
-      'game': Gamepad2,
-      'flower': Flower,
-      'tent': Home,
-      'table': Table,
-      'chair': Table,
-      'housewares': Home,
-      'entertainment': Music,
-      'toilet': Home,
-      'prop': Camera,
-      'decor': Flower,
-      'child': Gamepad2
+    const iconMap: { [key: string]: typeof Home } = {
+      transport: Truck,
+      photo: Camera,
+      lighting: Lightbulb,
+      audio: Music,
+      game: Gamepad2,
+      flower: Flower,
+      tent: Home,
+      table: Table,
+      chair: Table,
+      housewares: Home,
+      entertainment: Music,
+      toilet: Home,
+      prop: Camera,
+      decor: Flower,
+      child: Gamepad2,
     };
-
     const lowerName = typeName.toLowerCase();
     for (const [key, icon] of Object.entries(iconMap)) {
-      if (lowerName.includes(key)) {
-        return icon;
-      }
+      if (lowerName.includes(key)) return icon;
     }
     return Home;
   };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Vendor Service</h1>
-        <p className="text-muted-foreground">
-          Browse vendor services and rental options
-        </p>
-      </div>
+      <DirectoryPageHeader
+        title="Vendor Service Rental/Buy Directory"
+        subtitle="Select rental type, then equipment / rental partner profile"
+        action={
+          <AddDirectoryEntryDialog
+            title="Add Rental / Buy Partner"
+            table="service_rental_buy"
+            typeColumn="unused"
+            customColumn="description"
+            typeLabel="Rental Type"
+            typeOptions={displayTypes.map((t) => ({ id: t.id, name: t.name }))}
+            skipTypeFk
+            onInserted={async (rowId, selectedTypeId) => {
+              if (!rowId || !selectedTypeId) return;
+              const typeNum = Number(selectedTypeId);
+              if (Number.isNaN(typeNum)) return;
+              const { error } = await supabase.from("service_rental_buy_assignments").insert({
+                service_rental_buy_id: rowId,
+                vendor_rental_type_id: typeNum,
+              });
+              if (error) console.error("service_rental_buy_assignments insert:", error);
+            }}
+            onCreated={fetchData}
+          />
+        }
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle>Select Service Types</CardTitle>
+          <CardTitle>Select Rental Types</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
-            <p className="text-center py-4">Loading service types...</p>
-          ) : error ? (
-            <p className="text-center py-4 text-destructive">Error loading data: {error}</p>
+            <p className="text-center py-4">Loading rental types...</p>
           ) : (
             <>
               <div className="space-y-3">
-                <label className="text-sm font-medium">Filter by Location</label>
-                <Input
-                  placeholder="Enter city, state, or zip code"
-                  value={locationFilter}
-                  onChange={(e) => setLocationFilter(e.target.value)}
-                  className="max-w-md"
-                />
+                <div className="max-w-md">
+                  <LocationFilterInput
+                    id="rental-location-filter"
+                    value={locationFilter}
+                    onChange={setLocationFilter}
+                    options={locationOptions}
+                  />
+                </div>
               </div>
-              
+
               <div className="space-y-3">
-                <label className="text-sm font-medium">Service Types (select all that apply)</label>
+                <p className="text-sm font-medium">Rental Types (select all that apply)</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {serviceTypes.map((type) => {
-                    const IconComponent = getServiceIcon(type.name || '');
-                    const isChecked = selectedServiceTypes.includes(type.id?.toString());
+                  {displayTypes.map((type) => {
+                    const IconComponent = getServiceIcon(type.name || "");
+                    const typeId = type.id?.toString();
+                    const isChecked = selectedRentalTypes.includes(typeId);
                     return (
                       <div key={type.id} className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-muted/50">
                         <Checkbox
-                          id={type.id?.toString()}
+                          id={`rental-type-${typeId}`}
                           checked={isChecked}
                           onCheckedChange={(checked) => {
-                            const typeId = type.id?.toString();
-                            if (checked) {
-                              setSelectedServiceTypes([...selectedServiceTypes, typeId]);
-                            } else {
-                              setSelectedServiceTypes(selectedServiceTypes.filter(id => id !== typeId));
-                            }
+                            if (checked) setSelectedRentalTypes([...selectedRentalTypes, typeId]);
+                            else setSelectedRentalTypes(selectedRentalTypes.filter((id) => id !== typeId));
                           }}
                         />
-                        <label htmlFor={type.id?.toString()} className="flex items-center gap-2 cursor-pointer text-sm font-medium">
-                          <IconComponent size={16} />
+                        <label
+                          htmlFor={`rental-type-${typeId}`}
+                          className="flex items-center gap-2 cursor-pointer text-sm font-medium"
+                        >
+                          <IconComponent size={16} aria-hidden />
                           {type.name}
                         </label>
                       </div>
@@ -157,32 +199,17 @@ const VendorServiceDirectory = () => {
                   })}
                 </div>
               </div>
-              
-              {selectedServiceTypes.length > 0 && (
-                <div className="p-4 bg-muted rounded-lg">
-                  <h3 className="font-medium mb-2">Selected Service Types:</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedServiceTypes.map(typeId => {
-                      const type = serviceTypes.find(t => t.id?.toString() === typeId);
-                      return (
-                        <span key={typeId} className="text-xs bg-primary/10 text-primary px-2 py-1 rounded">
-                          {type?.name}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </>
           )}
 
-          <Button 
+          <Button
+            type="button"
             onClick={() => {
-              setSelectedServiceTypes([]);
+              setSelectedRentalTypes([]);
               setLocationFilter("");
-            }} 
+            }}
             variant="outline"
-            disabled={selectedServiceTypes.length === 0 && !locationFilter}
+            disabled={selectedRentalTypes.length === 0 && !locationFilter}
           >
             Clear All Filters
           </Button>
@@ -192,102 +219,111 @@ const VendorServiceDirectory = () => {
       <Card>
         <CardHeader>
           <CardTitle>
-            {selectedServiceTypes.length > 0 ? (
+            {selectedRentalTypes.length > 0 ? (
               <>
-                {selectedServiceTypes.map(typeId =>
-                  serviceTypes.find(t => t.id?.toString() === typeId)?.name
-                ).filter(Boolean).join(', ')} ({filteredProfiles.length})
+                {selectedRentalTypes
+                  .map((typeId) => displayTypes.find((t) => t.id?.toString() === typeId)?.name)
+                  .filter(Boolean)
+                  .join(", ")}{" "}
+                ({filteredProfiles.length})
               </>
             ) : (
-              <>Service Profiles ({filteredProfiles.length})</>
+              <>Rental / Buy Profiles ({filteredProfiles.length})</>
             )}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-center py-8">Loading service profiles...</p>
-          ) : error ? (
-            <p className="text-center py-8 text-destructive">Error loading profiles: {error}</p>
+            <p className="text-center py-8">Loading rental profiles...</p>
           ) : filteredProfiles.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">
-              No service profiles match your selected criteria.
+              No rental profiles match your selected criteria.
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredProfiles.map((profile) => {
-                const profileTypes = profile.serv_vendor_rental_assignments?.map((assignment: any) => 
-                  assignment.vendor_rental_types?.name
-                ).filter(Boolean) || [];
-                const primaryType = profileTypes[0] || 'Service';
-                const IconComponent = getServiceIcon(primaryType);
-                
+                const typeNames = typeIdsForRental(profile.id)
+                  .map((id) => displayTypes.find((t) => t.id === id)?.name)
+                  .filter(Boolean) as string[];
+                const typeLabel = typeNames.length ? typeNames.join(", ") : "Rental Services";
+                const IconComponent = getServiceIcon(typeLabel);
+
                 return (
-                  <Card key={profile.id} className="hover:shadow-lg transition-shadow">
+                  <Card
+                    key={profile.id}
+                    id={directoryProfileElementId(profile.id)}
+                    className={`hover:shadow-lg transition-shadow ${rentalHighlightClass(profile.id)}`}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-center gap-2">
-                        <IconComponent className="h-5 w-5 text-primary" />
-                        <CardTitle className="text-lg">{profile.business_name || 'Service Provider'}</CardTitle>
+                        <IconComponent className="h-5 w-5 text-primary" aria-hidden />
+                        <CardTitle className="text-lg">{profile.business_name || "Rental Partner"}</CardTitle>
                       </div>
-                      {profileTypes.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {profileTypes.map((type: string, index: number) => (
-                            <span key={index} className="text-xs bg-primary/10 text-primary px-2 py-1 rounded">
-                              {type}
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {typeNames.length ? (
+                          typeNames.map((n) => (
+                            <span key={n} className="text-xs bg-primary/10 text-primary px-2 py-1 rounded">
+                              {n}
                             </span>
-                          ))}
-                        </div>
-                      )}
+                          ))
+                        ) : (
+                          <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded">{typeLabel}</span>
+                        )}
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="space-y-1">
                         <p className="text-sm text-muted-foreground">Contact Person</p>
-                        <p className="font-semibold">{profile.contact_name || 'N/A'}</p>
+                        <p className="font-semibold">{profile.contact_name || "N/A"}</p>
                       </div>
-                      
                       <div className="space-y-1">
                         <p className="text-sm text-muted-foreground">Email</p>
-                        <p className="text-sm">{profile.email || 'N/A'}</p>
+                        {profile.email?.trim() ? (
+                          <a
+                            href={`mailto:${String(profile.email).trim()}`}
+                            className="text-sm text-primary hover:underline break-all"
+                          >
+                            {profile.email}
+                          </a>
+                        ) : (
+                          <p className="text-sm">N/A</p>
+                        )}
                       </div>
-                      
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Phone</p>
-                        <p className="text-sm">{profile.phone_number || 'N/A'}</p>
-                      </div>
-                      
                       <div className="space-y-1">
                         <p className="text-sm text-muted-foreground">Address</p>
-                        <p className="text-sm">{[profile.city, profile.state, profile.zip].filter(Boolean).join(', ') || 'Location not specified'}</p>
+                        <p className="text-sm">
+                          {[profile.city, profile.state, profile.zip].filter(Boolean).join(", ") ||
+                            "Location not specified"}
+                        </p>
                       </div>
-                      
-                      {profile.price && (
+                      {profile.price != null && (
                         <div className="space-y-1">
                           <p className="text-sm text-muted-foreground">Starting Cost</p>
-                          <p className="text-lg font-bold text-primary">${profile.price}</p>
+                          <p className="text-lg font-bold text-primary">
+                            {formatDirectoryPrice(profile.price) ?? String(profile.price)}
+                          </p>
                         </div>
                       )}
-                      
                       {profile.description && (
                         <p className="text-sm text-muted-foreground">{profile.description}</p>
                       )}
-                      
-                      <div className="flex gap-2 mt-4">
-                        <Button 
-                          className="flex-1" 
+                      <div className="flex flex-col gap-2 mt-4">
+                        <DirectoryProfileLink
+                          kind="service_rental_buy"
+                          id={profile.id}
+                          className="w-full justify-center py-2 border rounded-md border-border"
+                        />
+                        <Button
+                          type="button"
+                          className="w-full"
                           variant="outline"
-                          onClick={() => window.location.href = `mailto:${profile.email || ''}`}
+                          onClick={() => {
+                            window.location.href = `mailto:${profile.email || ""}`;
+                          }}
                           disabled={!profile.email}
                         >
-                          <Mail className="h-4 w-4 mr-2" />
+                          <Mail className="h-4 w-4 mr-2" aria-hidden />
                           Email
-                        </Button>
-                        <Button 
-                          className="flex-1" 
-                          variant="outline"
-                          onClick={() => window.location.href = `tel:${profile.phone_number || ''}`}
-                          disabled={!profile.phone_number}
-                        >
-                          <Phone className="h-4 w-4 mr-2" />
-                          Phone
                         </Button>
                       </div>
                     </CardContent>

@@ -8,56 +8,32 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AvatarWithBrandFallback } from "@/components/AvatarWithBrandFallback";
 import { Upload } from "lucide-react";
+import { getAuthErrorDescription } from "@/lib/authErrors";
+import { defaultProfileFromAuthUser } from "@/lib/defaultProfileFromAuthUser";
 
 const Profile = () => {
   const { user, resetPassword, loading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Debug logging
-  console.log("Profile component rendering, user:", user);
-  console.log("Profile component user email:", user?.email);
-  console.log("Profile component user id:", user?.id);
-  console.log("Profile component loading:", loading);
-
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
-  
+
   // Profile data state
   const [profile, setProfile] = useState({
     username: "",
     display_name: "",
     bio: "",
-    avatar_url: ""
+    avatar_url: "",
+    /** Replaces legacy Registration table usage per DB PDF — stored on `profiles.subscription_level` */
+    subscription_level: "",
   });
   const [avatarUploading, setAvatarUploading] = useState(false);
-
-  // Show loading while auth is initializing
-  if (loading) {
-    return (
-      <main className="mx-auto max-w-3xl space-y-6">
-        <div className="text-center">Loading...</div>
-      </main>
-    );
-  }
-
-  // Redirect if not authenticated
-  if (!user) {
-    navigate('/auth');
-    return null;
-  }
-
-  // Load user profile
-  useEffect(() => {
-    if (user?.id) {
-      loadUserProfile();
-    }
-  }, [user?.id]);
 
   useEffect(() => {
     // Basic SEO for this page
@@ -81,22 +57,28 @@ const Profile = () => {
     canonical.setAttribute("href", window.location.href);
   }, [user, navigate]);
 
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/auth");
+    }
+  }, [loading, user, navigate]);
+
   const loadUserProfile = async () => {
     if (!user?.id) return;
 
     try {
       const { data, error } = await supabase
-        .from('profiles')
-        .select('username, display_name, bio, avatar_url')
-        .eq('user_id', user.id)
+        .from("profiles")
+        .select("username, display_name, bio, avatar_url, subscription_level")
+        .eq("user_id", user.id)
         .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error loading profile:', error);
+      if (error && error.code !== "PGRST116") {
+        console.error("Error loading profile:", error);
         toast({
           title: "Error loading profile",
           description: error.message,
-          variant: "destructive"
+          variant: "destructive",
         });
         return;
       }
@@ -106,14 +88,15 @@ const Profile = () => {
           username: data.username || "",
           display_name: data.display_name || "",
           bio: data.bio || "",
-          avatar_url: data.avatar_url || ""
+          avatar_url: data.avatar_url || "",
+          subscription_level: (data as { subscription_level?: string | null }).subscription_level || "",
         });
       } else {
         // Create profile if it doesn't exist
         await createUserProfile();
       }
     } catch (err: any) {
-      console.error('Error in loadUserProfile:', err);
+      console.error("Error in loadUserProfile:", err);
     }
   };
 
@@ -121,39 +104,44 @@ const Profile = () => {
     if (!user?.id) return;
 
     try {
-      console.log("Creating profile for user:", user.id);
+      const { username, display_name } = defaultProfileFromAuthUser(user);
       const { data, error } = await supabase
-        .from('profiles')
+        .from("profiles")
         .insert({
           user_id: user.id,
-          username: "idaeventpartners.com",
-          display_name: "IDA Event Partners"
+          username,
+          display_name,
         })
         .select()
         .single();
 
       if (error) {
-        console.error('Error creating profile:', error);
+        console.error("Error creating profile:", error);
         toast({
           title: "Error creating profile",
           description: error.message,
-          variant: "destructive"
+          variant: "destructive",
         });
         return;
       }
 
-      console.log("Profile created successfully:", data);
-      // Set the profile state immediately
       setProfile({
-        username: "idaeventpartners.com",
-        display_name: "IDA Event Partners",
+        username: data?.username ?? username,
+        display_name: data?.display_name ?? display_name,
         bio: "",
-        avatar_url: ""
+        avatar_url: "",
+        subscription_level: "",
       });
     } catch (err: any) {
-      console.error('Error in createUserProfile:', err);
+      console.error("Error in createUserProfile:", err);
     }
   };
+
+  useEffect(() => {
+    if (user?.id) {
+      void loadUserProfile();
+    }
+  }, [user?.id]);
 
   const updateProfile = async () => {
     if (!user?.id) return;
@@ -161,33 +149,36 @@ const Profile = () => {
     setProfileLoading(true);
     try {
       const { error } = await supabase
-        .from('profiles')
+        .from("profiles")
         .update({
           username: profile.username,
           display_name: profile.display_name,
           bio: profile.bio,
-          avatar_url: profile.avatar_url
+          avatar_url: profile.avatar_url,
+          subscription_level: profile.subscription_level.trim() || null,
         })
-        .eq('user_id', user.id);
+        .eq("user_id", user.id);
 
       if (error) {
         toast({
           title: "Update failed",
           description: error.message,
-          variant: "destructive"
+          variant: "destructive",
         });
         return;
       }
 
       toast({
         title: "Profile updated",
-        description: "Your profile has been updated successfully."
+        description: "Your profile has been updated successfully.",
       });
+
+      window.dispatchEvent(new Event("profileUpdated"));
     } catch (err: any) {
       toast({
         title: "Error",
         description: err.message || "Something went wrong.",
-        variant: "destructive"
+        variant: "destructive",
       });
     } finally {
       setProfileLoading(false);
@@ -199,11 +190,11 @@ const Profile = () => {
     if (!file || !user?.id) return;
 
     // Validate file type
-    if (!file.type.startsWith('image/')) {
+    if (!file.type.startsWith("image/")) {
       toast({
         title: "Invalid file type",
         description: "Please select an image file.",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
@@ -213,73 +204,66 @@ const Profile = () => {
       toast({
         title: "File too large",
         description: "Please select an image smaller than 5MB.",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
 
     setAvatarUploading(true);
     try {
-      const fileExt = file.name.split('.').pop();
+      const fileExt = file.name.split(".").pop();
       const fileName = `${user.id}/avatar.${fileExt}`;
 
       // Delete existing avatar if any
       if (profile.avatar_url) {
-        const oldPath = profile.avatar_url.split('/').pop();
+        const oldPath = profile.avatar_url.split("/").pop();
         if (oldPath) {
-          await supabase.storage
-            .from('avatars')
-            .remove([`${user.id}/${oldPath}`]);
+          await supabase.storage.from("avatars").remove([`${user.id}/${oldPath}`]);
         }
       }
 
       // Upload new avatar
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(fileName, file, { upsert: true });
+      const { error: uploadError } = await supabase.storage.from("avatars").upload(fileName, file, { upsert: true });
 
       if (uploadError) {
         throw uploadError;
       }
 
       // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(fileName);
+      const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(fileName);
 
       // Add cache-busting query param
       const avatarUrl = urlData.publicUrl + `?t=${Date.now()}`;
 
       // Update profile with new avatar URL
       const { error: updateError } = await supabase
-        .from('profiles')
+        .from("profiles")
         .update({ avatar_url: avatarUrl })
-        .eq('user_id', user.id);
+        .eq("user_id", user.id);
 
       if (updateError) {
         throw updateError;
       }
 
       // Update local state
-      setProfile(prev => ({ ...prev, avatar_url: avatarUrl }));
+      setProfile((prev) => ({ ...prev, avatar_url: avatarUrl }));
 
       // Reload profile from database to ensure latest avatar_url
       await loadUserProfile();
 
       // Dispatch custom event to update header avatar
-      window.dispatchEvent(new Event('profileUpdated'));
+      window.dispatchEvent(new Event("profileUpdated"));
 
       toast({
         title: "Avatar updated",
-        description: "Your profile picture has been updated successfully."
+        description: "Your profile picture has been updated successfully.",
       });
-
     } catch (error: any) {
-      console.error('Avatar upload error:', error);
+      console.error("Avatar upload error:", error);
       toast({
         title: "Upload failed",
         description: error.message || "Failed to upload avatar.",
-        variant: "destructive"
+        variant: "destructive",
       });
     } finally {
       setAvatarUploading(false);
@@ -288,46 +272,61 @@ const Profile = () => {
 
   const handleSendResetEmail = async () => {
     if (!user?.email) {
-      toast({ 
-        title: "No email found", 
+      toast({
+        title: "No email found",
         description: "Your account email could not be determined.",
-        variant: "destructive" 
+        variant: "destructive",
       });
       return;
     }
-    
-    console.log('Sending reset email to:', user.email);
-    
+
+    console.log("Sending reset email to:", user.email);
+
     try {
       const { error } = await resetPassword(user.email);
-      
+
       if (error) {
-        console.error('Reset email error:', error);
-        toast({ 
-          title: "Reset failed", 
-          description: error.message || "Could not send reset email.", 
-          variant: "destructive" 
+        console.error("Reset email error:", error);
+        toast({
+          title: "Reset failed",
+          description: getAuthErrorDescription(error, "password_reset"),
+          variant: "destructive",
         });
         return;
       }
-      
-      toast({ 
-        title: "Reset email sent", 
-        description: "Check your inbox for the password reset link. You will be redirected back to this page." 
+
+      toast({
+        title: "Reset email sent",
+        description: "Check your inbox for the password reset link. You will be redirected back to this page.",
       });
-    } catch (err: any) {
-      console.error('Reset email exception:', err);
-      toast({ 
-        title: "Error", 
-        description: "Could not send reset email. Please try again.", 
-        variant: "destructive" 
+    } catch (err: unknown) {
+      console.error("Reset email exception:", err);
+      const msg = err instanceof Error ? err.message : "";
+      toast({
+        title: "Error",
+        description: msg
+          ? getAuthErrorDescription({ message: msg }, "password_reset")
+          : getAuthErrorDescription({ message: "Could not send reset email." }, "password_reset"),
+        variant: "destructive",
       });
     }
   };
 
+  if (loading) {
+    return (
+      <main className="mx-auto max-w-3xl space-y-6">
+        <div className="text-center">Loading...</div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!user?.email) {
       toast({ title: "Not signed in", description: "Please sign in again.", variant: "destructive" });
       return;
@@ -337,29 +336,33 @@ const Profile = () => {
       toast({ title: "Weak password", description: "Use at least 8 characters.", variant: "destructive" });
       return;
     }
-    
+
     if (newPassword !== confirmPassword) {
-      toast({ title: "Passwords do not match", description: "Make sure both passwords match.", variant: "destructive" });
+      toast({
+        title: "Passwords do not match",
+        description: "Make sure both passwords match.",
+        variant: "destructive",
+      });
       return;
     }
 
     setPasswordLoading(true);
-    
+
     try {
-      console.log('Attempting to update password for user:', user.id);
-      
-      const { data, error } = await supabase.auth.updateUser({ 
-        password: newPassword 
+      console.log("Attempting to update password for user:", user.id);
+
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword,
       });
-      
-      console.log('Password update result:', { data, error });
-      
+
+      console.log("Password update result:", { data, error });
+
       if (error) {
-        console.error('Password update error:', error);
-        toast({ 
-          title: "Update failed", 
-          description: error.message, 
-          variant: "destructive" 
+        console.error("Password update error:", error);
+        toast({
+          title: "Update failed",
+          description: error.message,
+          variant: "destructive",
         });
         return;
       }
@@ -368,18 +371,17 @@ const Profile = () => {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      
-      toast({ 
-        title: "Password updated successfully", 
-        description: "Your password has been changed." 
+
+      toast({
+        title: "Password updated successfully",
+        description: "Your password has been changed.",
       });
-      
     } catch (err: any) {
-      console.error('Password update exception:', err);
-      toast({ 
-        title: "Unexpected error", 
-        description: "Something went wrong. Please try again.", 
-        variant: "destructive" 
+      console.error("Password update exception:", err);
+      toast({
+        title: "Unexpected error",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
       });
     } finally {
       setPasswordLoading(false);
@@ -401,12 +403,13 @@ const Profile = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
-              <Avatar className="h-20 w-20">
-                <AvatarImage src={profile.avatar_url} alt="Profile picture" />
-                <AvatarFallback className="text-lg">
-                  {profile.display_name.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
-                </AvatarFallback>
-              </Avatar>
+              <AvatarWithBrandFallback
+                className="h-20 w-20"
+                src={profile.avatar_url}
+                alt="Profile picture"
+                displayName={profile.display_name || profile.username || user?.email?.split("@")[0] || "User"}
+                fallbackClassName="text-2xl"
+              />
               <div className="grid gap-2">
                 <Label htmlFor="avatar">Profile Picture</Label>
                 <div className="flex items-center gap-2">
@@ -422,15 +425,13 @@ const Profile = () => {
                     variant="outline"
                     size="sm"
                     disabled={avatarUploading}
-                    onClick={() => document.getElementById('avatar')?.click()}
+                    onClick={() => document.getElementById("avatar")?.click()}
                   >
                     <Upload className="h-4 w-4 mr-2" />
-                    {avatarUploading ? 'Uploading...' : 'Upload'}
+                    {avatarUploading ? "Uploading..." : "Upload"}
                   </Button>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  PNG, JPG up to 5MB. Avatar will be displayed publicly.
-                </p>
+                <p className="text-sm text-muted-foreground">PNG, JPG up to 5MB. Avatar will be displayed publicly.</p>
               </div>
             </div>
             <div className="grid gap-2">
@@ -438,7 +439,7 @@ const Profile = () => {
               <Input
                 id="username"
                 value={profile.username}
-                onChange={(e) => setProfile(prev => ({ ...prev, username: e.target.value }))}
+                onChange={(e) => setProfile((prev) => ({ ...prev, username: e.target.value }))}
                 placeholder="Enter your username"
               />
             </div>
@@ -447,7 +448,7 @@ const Profile = () => {
               <Input
                 id="display_name"
                 value={profile.display_name}
-                onChange={(e) => setProfile(prev => ({ ...prev, display_name: e.target.value }))}
+                onChange={(e) => setProfile((prev) => ({ ...prev, display_name: e.target.value }))}
                 placeholder="Enter your display name"
               />
             </div>
@@ -456,14 +457,57 @@ const Profile = () => {
               <Input
                 id="bio"
                 value={profile.bio}
-                onChange={(e) => setProfile(prev => ({ ...prev, bio: e.target.value }))}
+                onChange={(e) => setProfile((prev) => ({ ...prev, bio: e.target.value }))}
                 placeholder="Tell us about yourself"
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="subscription_level">Subscription level</Label>
+              <Input
+                id="subscription_level"
+                value={profile.subscription_level}
+                onChange={(e) =>
+                  setProfile((prev) => ({
+                    ...prev,
+                    subscription_level: e.target.value,
+                  }))
+                }
+                placeholder="e.g. trial, paid (optional)"
+              />
+              <p className="text-sm text-muted-foreground">
+                Stored on your profile for reporting. Use your account billing source of truth for charges.
+              </p>
             </div>
             <div className="grid gap-2">
               <Label>Email</Label>
               <Input value={user?.email || ""} readOnly />
             </div>
+            <div className="grid gap-2">
+              <Label>User ID</Label>
+              <Input value={user.id} readOnly className="font-mono text-xs" />
+            </div>
+            {(() => {
+              const meta = user.user_metadata as { user_category?: string; user_type?: string } | undefined;
+              const cat = meta?.user_category?.trim();
+              const typ = meta?.user_type?.trim();
+              if (!cat && !typ) return null;
+              return (
+                <>
+                  {cat ? (
+                    <div className="grid gap-2">
+                      <Label>Your category</Label>
+                      <Input value={cat} readOnly />
+                    </div>
+                  ) : null}
+                  {typ ? (
+                    <div className="grid gap-2">
+                      <Label>Your planner type</Label>
+                      <Input value={typ} readOnly />
+                    </div>
+                  ) : null}
+                </>
+              );
+            })()}
             <Button onClick={updateProfile} disabled={profileLoading}>
               {profileLoading ? "Updating..." : "Update Profile"}
             </Button>
@@ -477,9 +521,7 @@ const Profile = () => {
         <Card>
           <CardHeader>
             <CardTitle>Change Password</CardTitle>
-            <CardDescription>
-              Update your account password. Use at least 8 characters.
-            </CardDescription>
+            <CardDescription>Update your account password. Use at least 8 characters.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleUpdatePassword} className="space-y-4">

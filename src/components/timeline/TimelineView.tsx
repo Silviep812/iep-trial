@@ -7,10 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { format, addDays, isAfter, isBefore, isWithinInterval, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
+import { computeEventLifecycle } from "@/lib/eventStatus";
+import { getMissingIepPrerequisites, shouldSkipIepPrerequisiteGuard } from "@/lib/taskBusinessRules";
 import { 
   CalendarIcon, 
   Clock, 
@@ -35,24 +38,36 @@ interface Task {
   dependencies?: string[];
   event_id?: string;
   due_date?: string;
-  is_overdue?: boolean;
-  is_misaligned?: boolean;
-  event_location?: string;
-  event_title?: string;
+  category?: string | null;
+  checklist?: unknown;
+  assigned_coordinator_name?: string | null;
+  archived?: boolean;
 }
 
 interface TimelineViewProps {
   eventId?: string;
+  /** Bumps when the parent saves the event or posts a request so timeline + event status stay fresh. */
+  refreshKey?: number;
 }
 
 
-const TimelineView = ({ eventId }: TimelineViewProps) => {
+type EventRow = {
+  id: string;
+  title: string;
+  status?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  archived?: boolean | null;
+};
+
+const TimelineView = ({ eventId, refreshKey = 0 }: TimelineViewProps) => {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [eventRow, setEventRow] = useState<EventRow | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [viewMode, setViewMode] = useState<'all' | 'day' | 'week' | 'month'>('all');
-  const [showOnlyIssues, setShowOnlyIssues] = useState(false);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [overdueFlags, setOverdueFlags] = useState<string[]>([]);
+  const [showTimelineIssues, setShowTimelineIssues] = useState(false);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -116,34 +131,34 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
   //    }
 
 
-  // Fetch real tasks for the selected event using the timeline view
+  // Fetch event row (status for active / timeline context) and tasks
   useEffect(() => {
     if (!eventId) {
       setTasks([]);
+      setEventRow(null);
       setLoading(false);
       return;
     }
     setLoading(true);
     const fetchTasks = async () => {
       try {
-        const { data, error } = await supabase
-          .from('event_task_timeline_view')
-          .select('*')
-          .eq('event_id', eventId)
-          .order('due_date', { ascending: true });
-          console.log('Fetched tasks from timeline view:', data, error);
+        const [{ data: evData, error: evErr }, { data, error }] = await Promise.all([
+          supabase
+            .from("events")
+            .select("id, title, status, start_date, end_date, archived")
+            .eq("id", eventId)
+            .maybeSingle(),
+          supabase
+            .from('tasks')
+            .select('*')
+            .eq('event_id', eventId)
+            .order('due_date', { ascending: true }),
+        ]);
+        if (evErr) console.warn(evErr);
+        setEventRow(evData ? { ...evData } : null);
         if (error) throw error;
-        const tasksData = (data || []).map((task: any) => {
-          // Use due_date as fallback for start_date/end_date if they're null
-          const dueDate = task.due_date ? new Date(task.due_date).toISOString().split('T')[0] : null;
-          return {
-            ...task,
-            start_date: task.start_date || dueDate || '',
-            end_date: task.end_date || dueDate || '',
-          };
-        });
-        setTasks(tasksData);
-        analyzeConstraints(tasksData);
+        setTasks(data || []);
+        analyzeConstraints(data || []);
       } catch (error) {
         toast({
           title: 'Error fetching tasks',
@@ -157,32 +172,38 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
     };
     fetchTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId]);
+  }, [eventId, refreshKey]);
 
   const analyzeConstraints = (taskList: Task[]) => {
+    const now = new Date();
     const conflictIds: string[] = [];
     const overdueIds: string[] = [];
 
-    // Use is_overdue flag from database view
+    const hasExplicitTimeWindow = (t: Task) =>
+      Boolean(t.start_time?.trim() && t.end_time?.trim());
+
+    const skipConflictCheck = (t: Task) =>
+      t.status === 'completed' || t.status === 'cancelled';
+
+    // Check for overdue tasks (computed based on due_date vs current time)
     taskList.forEach(task => {
-      if (task.is_overdue) {
-        overdueIds.push(task.id);
-      }
-      if (task.is_misaligned) {
-        // Misaligned tasks are also considered issues
-        if (!overdueIds.includes(task.id)) {
+      if (task.due_date) {
+        const dueDate = new Date(task.due_date);
+        if (isAfter(now, dueDate) && task.status !== 'completed') {
           overdueIds.push(task.id);
         }
       }
     });
 
-    // Check for overlapping tasks (simplified - same day overlaps)
+    // Time conflicts: only when both tasks share a day and both have real start/end times.
+    // Missing times used to default to 00:00–23:59, which falsely flagged every same-day pair.
     for (let i = 0; i < taskList.length; i++) {
       for (let j = i + 1; j < taskList.length; j++) {
         const task1 = taskList[i];
         const task2 = taskList[j];
-        
-        // Check date overlap
+
+        if (skipConflictCheck(task1) || skipConflictCheck(task2)) continue;
+
         const task1Start = new Date(task1.start_date);
         const task1End = new Date(task1.end_date);
         const task2Start = new Date(task2.start_date);
@@ -193,17 +214,17 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
                        isWithinInterval(task2Start, { start: task1Start, end: task1End }) ||
                        isWithinInterval(task2End, { start: task1Start, end: task1End });
 
-        if (overlap && task1.start_date === task2.start_date) {
-          // Check time overlap on same day
-          const task1StartTime = parseInt(task1.start_time?.replace(':', '') || '0000');
-          const task1EndTime = parseInt(task1.end_time?.replace(':', '') || '2359');
-          const task2StartTime = parseInt(task2.start_time?.replace(':', '') || '0000');
-          const task2EndTime = parseInt(task2.end_time?.replace(':', '') || '2359');
+        if (!overlap || task1.start_date !== task2.start_date) continue;
+        if (!hasExplicitTimeWindow(task1) || !hasExplicitTimeWindow(task2)) continue;
 
-          if ((task1StartTime <= task2EndTime && task1EndTime >= task2StartTime)) {
-            if (!conflictIds.includes(task1.id)) conflictIds.push(task1.id);
-            if (!conflictIds.includes(task2.id)) conflictIds.push(task2.id);
-          }
+        const task1StartTime = parseInt(task1.start_time!.replace(':', ''), 10);
+        const task1EndTime = parseInt(task1.end_time!.replace(':', ''), 10);
+        const task2StartTime = parseInt(task2.start_time!.replace(':', ''), 10);
+        const task2EndTime = parseInt(task2.end_time!.replace(':', ''), 10);
+
+        if (task1StartTime <= task2EndTime && task1EndTime >= task2StartTime) {
+          if (!conflictIds.includes(task1.id)) conflictIds.push(task1.id);
+          if (!conflictIds.includes(task2.id)) conflictIds.push(task2.id);
         }
       }
     }
@@ -212,19 +233,12 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
     setOverdueFlags(overdueIds);
   };
 
-  // Filter tasks by day, week, or month of selectedDate, and by issues if enabled
+  // Filter tasks by day, week, or month of selectedDate
   const getTasksForSelectedDate = (date: Date | undefined) => {
-    let filteredTasks = tasks;
-    
-    // Filter by issues if enabled
-    if (showOnlyIssues) {
-      filteredTasks = filteredTasks.filter(task => task.is_overdue || task.is_misaligned);
-    }
-    
-    if (!date) return filteredTasks;
+    if (!date) return tasks;
     const dateStr = format(date, 'yyyy-MM-dd');
     if (viewMode === 'day') {
-      return filteredTasks.filter(task => {
+      return tasks.filter(task => {
         if (!task.due_date) return false;
         return format(new Date(task.due_date), 'yyyy-MM-dd') === dateStr;
       });
@@ -235,7 +249,7 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
       startOfWeek.setDate(date.getDate() - date.getDay());
       const endOfWeek = new Date(startOfWeek);
       endOfWeek.setDate(startOfWeek.getDate() + 6);
-      return filteredTasks.filter(task => {
+      return tasks.filter(task => {
         if (!task.due_date) return false;
         const due = new Date(task.due_date);
         return due >= startOfWeek && due <= endOfWeek;
@@ -246,13 +260,13 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
       const month = date.getMonth();
       const startOfMonth = new Date(year, month, 1);
       const endOfMonth = new Date(year, month + 1, 0);
-      return filteredTasks.filter(task => {
+      return tasks.filter(task => {
         if (!task.due_date) return false;
         const due = new Date(task.due_date);
         return due >= startOfMonth && due <= endOfMonth;
       });
     }
-    return filteredTasks;
+    return tasks;
   };
 
   const getStatusColor = (status: Task['status'] | 'overdue') => {
@@ -386,10 +400,53 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
 
   const updateTask = async (taskId: string, updates: Partial<Task>) => {
     try {
+      const originalTask = tasks.find((t) => t.id === taskId);
+      const assignmentTouched = Object.prototype.hasOwnProperty.call(updates, "assigned_to");
+      const skipIep =
+        shouldSkipIepPrerequisiteGuard(updates as Record<string, unknown>) && !assignmentTouched;
+      if (originalTask && !skipIep) {
+        const effCategory =
+          updates.category !== undefined ? updates.category : originalTask.category;
+        const effChecklist =
+          updates.checklist !== undefined ? updates.checklist : originalTask.checklist;
+        const missing = getMissingIepPrerequisites(effCategory, effChecklist);
+        if (missing.length > 0) {
+          toast({
+            title: "Prerequisites incomplete",
+            description:
+              "Confirm all prerequisite items for this assignment type before saving timeline changes. Open the task in Project Management to check every prerequisite box.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      if (
+        assignmentTouched &&
+        updates.assigned_to &&
+        originalTask?.event_id
+      ) {
+        const { data: userClash } = await supabase
+          .from("tasks")
+          .select("id, title")
+          .eq("event_id", originalTask.event_id)
+          .eq("assigned_to", updates.assigned_to)
+          .neq("id", taskId)
+          .limit(1);
+        if (userClash && userClash.length > 0) {
+          toast({
+            title: "Assignee already has a task",
+            description: `Another task is already assigned to this user: "${userClash[0].title}".`,
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
       // Update in Supabase first
       const { error } = await supabase
         .from('tasks')
-        .update(updates)
+        .update(updates as any)
         .eq('id', taskId);
 
       if (error) throw error;
@@ -423,21 +480,66 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
     );
   }
 
+  const hasTimelineIssues = conflicts.length > 0 || overdueFlags.length > 0;
+
+  const lifecycle = computeEventLifecycle(eventRow ?? undefined);
+  const eventStatusLabel = lifecycle?.eventStatusLabel ?? "";
+  const isPastEvent = lifecycle?.isPastEvent ?? false;
+  const isCancelled = lifecycle?.isCancelled ?? false;
+  const isActiveEvent = !!(eventRow && lifecycle?.isActiveEvent);
+  const isArchivedEvent = lifecycle?.isArchived ?? false;
+
   return (
     <div className="space-y-6">
+      {eventRow && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+          <Badge variant="secondary" className="font-normal">
+            {eventRow.title}
+          </Badge>
+          {eventStatusLabel ? (
+            <Badge variant="outline" className="capitalize">
+              Event: {eventStatusLabel}
+            </Badge>
+          ) : null}
+          {isArchivedEvent ? (
+            <Badge variant="secondary">Archived</Badge>
+          ) : isCancelled ? (
+            <Badge variant="destructive">Cancelled</Badge>
+          ) : isPastEvent ? (
+            <Badge variant="secondary">Past event</Badge>
+          ) : isActiveEvent ? (
+            <Badge className="bg-primary text-primary-foreground">Active event</Badge>
+          ) : null}
+        </div>
+      )}
       {/* Header Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <CalendarIcon className="h-5 w-5 text-primary" />
-            Timeline & Task Management
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage your event timeline and tasks
+          <h2 className="text-xl font-semibold">Timeline View</h2>
+          <p className="text-sm text-muted-foreground">
+            {isActiveEvent
+              ? "Task statuses stay in sync with Project Management; overdue highlights apply to open work."
+              : "Manage task schedules and identify conflicts"}
           </p>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          <div className="flex items-center justify-between sm:justify-start gap-3 rounded-md border bg-muted/30 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="timeline-show-issues"
+                checked={showTimelineIssues}
+                onCheckedChange={setShowTimelineIssues}
+              />
+              <Label htmlFor="timeline-show-issues" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+                Show scheduling issues
+              </Label>
+            </div>
+            {!showTimelineIssues && hasTimelineIssues && (
+              <span className="text-xs text-muted-foreground shrink-0">Turn on to view</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
           <Select value={viewMode} onValueChange={(value: 'all'| 'day' | 'week' | 'month' ) => setViewMode(value)}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -449,15 +551,6 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
               <SelectItem value="month">Month</SelectItem>
             </SelectContent>
           </Select>
-          
-          <Button
-            variant={showOnlyIssues ? "default" : "outline"}
-            onClick={() => setShowOnlyIssues(!showOnlyIssues)}
-            className="flex items-center gap-2"
-          >
-            <AlertTriangle className="h-4 w-4" />
-            {showOnlyIssues ? "Show All" : "Show Only Issues"}
-          </Button>
           
           <Popover>
             <PopoverTrigger asChild>
@@ -476,11 +569,12 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
               />
             </PopoverContent>
           </Popover>
+          </div>
         </div>
       </div>
 
       {/* Alerts Section */}
-      {(conflicts.length > 0 || overdueFlags.length > 0) && (
+      {showTimelineIssues && hasTimelineIssues && (
         <Card className="border-destructive/20 bg-destructive/5">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-destructive">
@@ -512,35 +606,36 @@ const TimelineView = ({ eventId }: TimelineViewProps) => {
             key={task.id} 
             className={cn(
               "shadow-sm border transition-all",
-              conflicts.includes(task.id) && "border-orange-300 bg-orange-50/30",
-              overdueFlags.includes(task.id) && "border-red-300 bg-red-50/30"
+              showTimelineIssues && conflicts.includes(task.id) && "border-orange-300 bg-orange-50/30",
+              showTimelineIssues && overdueFlags.includes(task.id) && "border-red-300 bg-red-50/30"
             )}
           >
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className={cn("w-3 h-3 rounded-full", getStatusColor(overdueFlags.includes(task.id) ? 'overdue' : task.status))} />
+                    <div
+                      className={cn(
+                        "w-3 h-3 rounded-full",
+                        getStatusColor(
+                          showTimelineIssues && overdueFlags.includes(task.id) ? 'overdue' : task.status
+                        )
+                      )}
+                    />
                     <h3 className="font-medium">{task.title}</h3>
                     <Badge variant="outline" className={getPriorityColor(task.priority)}>
                       {task.priority}
                     </Badge>
-                    {conflicts.includes(task.id) && (
+                    {showTimelineIssues && conflicts.includes(task.id) && (
                       <Badge variant="destructive" className="text-xs">
                         <XCircle className="h-3 w-3 mr-1" />
                         Conflict
                       </Badge>
                     )}
-                    {overdueFlags.includes(task.id) && (
+                    {showTimelineIssues && overdueFlags.includes(task.id) && (
                       <Badge variant="destructive" className="text-xs">
                         <Flag className="h-3 w-3 mr-1" />
                         Overdue
-                      </Badge>
-                    )}
-                    {task.is_misaligned && (
-                      <Badge variant="destructive" className="text-xs">
-                        <AlertTriangle className="h-3 w-3 mr-1" />
-                        Misaligned
                       </Badge>
                     )}
                   </div>

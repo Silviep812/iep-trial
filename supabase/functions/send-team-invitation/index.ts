@@ -22,51 +22,88 @@ interface TeamInvitationRequest {
   role: string;
   inviterName: string;
   inviterEmail: string;
-  eventId?: string | null;
   teamId?: string;
   isCoordinator?: boolean;
   isViewer?: boolean;
-  collaboratorTypes?: string[];
 }
 
 const handler = async (req: Request): Promise<Response> => {
-  console.log("Team invitation function called");
-
   // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // ── Auth guard: only authenticated users can send invitations
-    const authHeader = req.headers.get('Authorization');
+    // Require authenticated caller
+    const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Unauthorized' }),
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } },
       );
     }
-    const { data: { user: caller }, error: callerErr } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
-    if (callerErr || !caller) {
+    const token = authHeader.replace("Bearer ", "");
+    const { data: callerData, error: callerErr } = await supabase.auth.getUser(token);
+    if (callerErr || !callerData?.user) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Unauthorized' }),
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } },
       );
     }
+    const callerId = callerData.user.id;
 
     const {
       email,
       role,
       inviterName,
       inviterEmail,
-      eventId,
       teamId,
       isCoordinator,
       isViewer,
-      collaboratorTypes,
     }: TeamInvitationRequest = await req.json();
+
+    // Validate role against an allowlist; admins may grant any of these
+    const ALLOWED_ROLES = new Set([
+      "admin",
+      "event_manager",
+      "task_coordinator",
+      "team_member",
+      "viewer",
+    ]);
+    if (!ALLOWED_ROLES.has(role)) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid role" }),
+        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } },
+      );
+    }
+
+    // Authorize caller: must be team_admin of the target team OR an admin
+    const { data: isAdmin } = await supabase.rpc("policy_has_permission_level", {
+      _user_id: callerId,
+      _level: "admin",
+    });
+    let isTeamAdmin = false;
+    if (teamId) {
+      const { data: ta } = await supabase.rpc("is_team_admin", {
+        _user_id: callerId,
+        _team_id: teamId,
+      });
+      isTeamAdmin = !!ta;
+    }
+    if (!isAdmin && !isTeamAdmin) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Forbidden" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } },
+      );
+    }
+
+    // Only admins can grant the admin role
+    if (role === "admin" && !isAdmin) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Only admins can assign the admin role" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } },
+      );
+    }
 
     console.log("Sending team invitation to:", email);
     console.log("Role:", role);
@@ -74,7 +111,7 @@ const handler = async (req: Request): Promise<Response> => {
 
     // First, check if user already exists by email
     const { data: existingUsers, error: checkError } = await supabase.auth.admin.listUsers();
-
+    
     if (checkError) {
       console.error("Error checking existing users:", checkError);
       throw checkError;
@@ -85,35 +122,21 @@ const handler = async (req: Request): Promise<Response> => {
     if (existingUser) {
       // User already exists, add them directly to the team
       console.log("User already exists, adding to team directly:", existingUser.id);
-
-      // Store the role in user_roles table (scoped to event)
+      
+      // Store the role in user_roles table
       const { error: roleError } = await supabase
         .from('user_roles')
         .upsert({
           user_id: existingUser.id,
-          role: role,
-          event_id: eventId || null,
-          permission_level: isCoordinator ? 'coordinator' : isViewer ? 'viewer' : 'admin',
+          role: role
         }, {
-          onConflict: 'user_id,role,event_id'
+          onConflict: 'user_id,role'
         });
 
       if (roleError) {
         console.error("Error storing role in database:", roleError);
       } else {
         console.log("Role stored in database for existing user:", existingUser.id);
-      }
-
-      // Save collaborator section assignments
-      if (collaboratorTypes && collaboratorTypes.length > 0 && eventId) {
-        const { error: collabErr } = await supabase
-          .from('collaborator_configurations')
-          .upsert({
-            user_id: existingUser.id,
-            event_id: eventId,
-            collaborator_types: collaboratorTypes,
-          }, { onConflict: 'user_id,event_id' });
-        if (collabErr) console.error("Error saving collaborator types:", collabErr);
       }
 
       // Create team_assignments record if teamId provided
@@ -124,7 +147,7 @@ const handler = async (req: Request): Promise<Response> => {
             user_id: existingUser.id,
             team_id: teamId,
             team_admin: false,
-            is_coordinator: isCoordinator || false,
+            is_collaborator: isCoordinator || false,
             is_viewer: isViewer || false,
           }, {
             onConflict: 'user_id,team_id'
@@ -160,42 +183,28 @@ const handler = async (req: Request): Promise<Response> => {
         inviter_name: inviterName,
         inviter_email: inviterEmail
       },
-      redirectTo: `${Deno.env.get('SITE_URL') || Deno.env.get('APP_URL') || 'http://localhost:5173'}/dashboard`
+      redirectTo: `${supabaseUrl.replace('//', '//').split('/')[0]}//${supabaseUrl.split('//')[1].split('.')[0]}.supabase.co/auth/v1/verify?type=invite&redirect_to=${encodeURIComponent(Deno.env.get('SITE_URL') || 'http://localhost:5173')}/dashboard`
     });
 
     if (inviteError) {
       throw inviteError;
     }
 
-    // Store the role in user_roles table (scoped to event)
+    // Store the role in user_roles table for the invited user
     if (data.user && data.user.id) {
       const { error: roleError } = await supabase
         .from('user_roles')
         .upsert({
           user_id: data.user.id,
-          role: role,
-          event_id: eventId || null,
-          permission_level: isCoordinator ? 'coordinator' : isViewer ? 'viewer' : 'admin',
+          role: role
         }, {
-          onConflict: 'user_id,role,event_id'
+          onConflict: 'user_id,role'
         });
 
       if (roleError) {
         console.error("Error storing role in database:", roleError);
       } else {
         console.log("Role stored in database for user:", data.user.id);
-      }
-
-      // Save collaborator section assignments for new invited user
-      if (collaboratorTypes && collaboratorTypes.length > 0 && eventId) {
-        const { error: collabErr } = await supabase
-          .from('collaborator_configurations')
-          .upsert({
-            user_id: data.user.id,
-            event_id: eventId,
-            collaborator_types: collaboratorTypes,
-          }, { onConflict: 'user_id,event_id' });
-        if (collabErr) console.error("Error saving collaborator types:", collabErr);
       }
 
       // Create team_assignments record with attributes if teamId provided
@@ -206,7 +215,7 @@ const handler = async (req: Request): Promise<Response> => {
             user_id: data.user.id,
             team_id: teamId,
             team_admin: false,
-            is_coordinator: isCoordinator || false,
+            is_collaborator: isCoordinator || false,
             is_viewer: isViewer || false,
           });
 
@@ -238,9 +247,9 @@ const handler = async (req: Request): Promise<Response> => {
   } catch (error: any) {
     console.error("Error in send-team-invitation function:", error);
     return new Response(
-      JSON.stringify({
+      JSON.stringify({ 
         success: false,
-        error: error.message
+        error: error.message 
       }),
       {
         status: 500,

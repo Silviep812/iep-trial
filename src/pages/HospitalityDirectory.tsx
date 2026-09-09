@@ -4,24 +4,36 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo} from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Hotel, Home, MapPin, Coffee, Phone, Mail, Globe, DollarSign, Users, ExternalLink } from "lucide-react";
+import { Hotel, Home, MapPin, Coffee, Mail, Globe, DollarSign, Users, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { DirectoryPageHeader } from "@/components/resource-directory/DirectoryPageHeader";
+import { openReservationUrl } from "@/lib/openExternalOrMailto";
+import { DirectoryProfileLink } from "@/components/resource-directory/DirectoryProfileLink";
+import { directoryProfileElementId } from "@/lib/directoryProfileLinks";
+import { useDirectoryProfileHighlight } from "@/hooks/useDirectoryProfileHighlight";
+import {
+  LocationFilterInput,
+  collectLocationOptions,
+  matchesLocationFilter,
+} from "@/components/resource-directory/LocationFilterInput";
 
 const HospitalityDirectory = () => {
   const [hospitalityProfiles, setHospitalityProfiles] = useState<any[]>([]);
   const [selectedHospitalityTypes, setSelectedHospitalityTypes] = useState<string[]>([]);
   const [locationFilter, setLocationFilter] = useState("");
+  /** Real locations recorded in this directory, offered as searchable filter choices. */
+  const locationOptions = useMemo(() => collectLocationOptions(hospitalityProfiles), [hospitalityProfiles]);
   const [loading, setLoading] = useState(true);
   const [showOtherForm, setShowOtherForm] = useState(false);
   const [otherFormData, setOtherFormData] = useState({
     business_name: "",
     address: "",
     email: "",
-    phone: ""
   });
   const { toast } = useToast();
+  const { highlightClass } = useDirectoryProfileHighlight(loading);
 
   useEffect(() => {
     fetchHospitalityProfiles();
@@ -46,9 +58,13 @@ const HospitalityDirectory = () => {
       
       if (error) {
         console.error('Error fetching hospitality profiles:', error);
+        toast({
+          title: "Error loading hospitality profiles",
+          description: error.message,
+          variant: "destructive",
+        });
+        setHospitalityProfiles([]);
       } else {
-        console.log('data from Hospitality Profile:', data);
-        
         // Remove duplicates based on business name
         const uniqueProfiles = data?.filter((profile, index, self) =>
           index === self.findIndex((p) => (
@@ -92,12 +108,13 @@ const HospitalityDirectory = () => {
     icon: getIconForType(type.name)
   }));
 
-  // Filter profiles based on selected types
-  const filteredProfiles = selectedHospitalityTypes.length > 0 
-    ? hospitalityProfiles.filter(profile => 
-        selectedHospitalityTypes.includes(profile.hospitality_type?.toString())
-      )
-    : hospitalityProfiles;
+  // Filter profiles based on selected types and location
+  const filteredProfiles = hospitalityProfiles.filter(profile => {
+    const matchesType = selectedHospitalityTypes.length === 0 ||
+      selectedHospitalityTypes.includes(profile.hospitality_type?.toString());
+    const matchesLocation = matchesLocationFilter(profile, locationFilter);
+    return matchesType && matchesLocation;
+  });
 
   const clearAllSelections = () => {
     setSelectedHospitalityTypes([]);
@@ -118,7 +135,7 @@ const HospitalityDirectory = () => {
       const otherType = hospitalityTypes.find(type => type.name.toLowerCase() === "other");
       if (otherType && typeId === otherType.id.toString()) {
         setShowOtherForm(false);
-        setOtherFormData({ business_name: "", address: "", email: "", phone: "" });
+        setOtherFormData({ business_name: "", address: "", email: "" });
       }
     }
   };
@@ -144,7 +161,7 @@ const HospitalityDirectory = () => {
             business_name: otherFormData.business_name,
             city: otherFormData.address,
             contact_name: otherFormData.business_name,
-            phone_number: otherFormData.phone,
+            phone_number: null,
             email: otherFormData.email,
             hospitality_type: otherType.id
           }
@@ -157,7 +174,7 @@ const HospitalityDirectory = () => {
         description: "Hospitality provider added successfully"
       });
 
-      setOtherFormData({ business_name: "", address: "", email: "", phone: "" });
+      setOtherFormData({ business_name: "", address: "", email: "" });
       fetchHospitalityProfiles();
     } catch (error) {
       console.error('Error adding hospitality provider:', error);
@@ -172,12 +189,10 @@ const HospitalityDirectory = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Hospitality Directory</h1>
-        <p className="text-muted-foreground">
-          Manage hospitality services and accommodations
-        </p>
-      </div>
+      <DirectoryPageHeader
+        title="Hospitality Directory"
+        subtitle="Browse by hospitality type, then profile (same pattern as other resource directories)"
+      />
 
       <Card>
         <CardHeader>
@@ -243,17 +258,6 @@ const HospitalityDirectory = () => {
                     placeholder="Enter email"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number *</Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    required
-                    value={otherFormData.phone}
-                    onChange={(e) => setOtherFormData({...otherFormData, phone: e.target.value})}
-                    placeholder="Enter phone number"
-                  />
-                </div>
               </div>
               <Button type="submit" className="w-full md:w-auto">
                 Add Provider
@@ -263,19 +267,18 @@ const HospitalityDirectory = () => {
           
           {/* Location Filter */}
           <div className="space-y-2">
-            <Label htmlFor="location">Filter by Location</Label>
-            <Input
-              id="location"
-              placeholder="Enter city, state, or ZIP code"
+            <LocationFilterInput
+              id="hospitality-location"
               value={locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value)}
+              onChange={setLocationFilter}
+              options={locationOptions}
             />
           </div>
 
           {(selectedHospitalityTypes.length > 0 || locationFilter) && (
             <div className="flex items-center justify-between">
               <p className="text-sm text-muted-foreground">
-                Showing {filteredProfiles.length} of {hospitalityProfiles.length} suppliers
+                Showing {filteredProfiles.length} of {hospitalityProfiles.length} hospitality profiles
               </p>
               <Button
                 variant="outline"
@@ -293,13 +296,9 @@ const HospitalityDirectory = () => {
         <CardHeader>
           <CardTitle>
             {(() => {
-              console.log('Selected types:', selectedHospitalityTypes);
-              console.log('Hospitality types:', hospitalityTypes);
-              
               if (selectedHospitalityTypes.length > 0) {
-                const typeNames = selectedHospitalityTypes.map((typeId, index) => {
+                const typeNames = selectedHospitalityTypes.map((typeId) => {
                   const matchedType = hospitalityTypes.find(t => t.id.toString() === typeId);
-                  console.log('Looking for typeId:', typeId, 'Found:', matchedType);
                   const typeName = matchedType?.name || 'Unknown';
                   const displayName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
                   return displayName;
@@ -323,7 +322,11 @@ const HospitalityDirectory = () => {
                 const IconComponent = typeOption?.icon || Hotel;
                 
                 return (
-                  <Card key={profile.id} className="hover:shadow-md transition-shadow">
+                  <Card
+                    key={profile.id}
+                    id={profile.id ? directoryProfileElementId(profile.id) : undefined}
+                    className={`hover:shadow-md transition-shadow ${profile.id ? highlightClass(profile.id) : ""}`}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
@@ -336,14 +339,7 @@ const HospitalityDirectory = () => {
                     <CardContent className="space-y-3">
                       {profile.contact_name && (
                         <div className="flex items-center gap-2 text-sm">
-                          <Phone size={16} className="text-muted-foreground" />
-                          <span>{profile.contact_name}</span>
-                          {profile.phone_number && (
-                            <>
-                              <span className="text-muted-foreground">•</span>
-                              <span>{profile.phone_number}</span>
-                            </>
-                          )}
+                          <span className="font-medium">{profile.contact_name}</span>
                         </div>
                       )}
                       
@@ -357,7 +353,12 @@ const HospitalityDirectory = () => {
                       {profile.email && (
                         <div className="flex items-center gap-2 text-sm">
                           <Mail size={16} className="text-muted-foreground" />
-                          <span className="text-sm">{profile.email}</span>
+                          <a
+                            href={`mailto:${profile.email}`}
+                            className="text-sm text-primary hover:underline"
+                          >
+                            {profile.email}
+                          </a>
                         </div>
                       )}
 
@@ -389,17 +390,42 @@ const HospitalityDirectory = () => {
                         </div>
                       )}
 
-                      {profile.make_reservations && (
-                        <div className="pt-2">
-                          <Button 
-                            variant="default" 
-                            size="sm" 
+                      {profile.id ? (
+                        <div className="pt-1">
+                          <DirectoryProfileLink kind="hospitality" id={profile.id} className="w-full justify-center" />
+                        </div>
+                      ) : null}
+
+                      {(profile.make_reservations?.toString().trim() ||
+                        profile.website?.toString().trim() ||
+                        profile.email?.toString().trim()) && (
+                        <div className="pt-2 space-y-2">
+                          <Button
+                            variant="default"
+                            size="sm"
                             className="w-full"
-                            onClick={() => window.open(profile.make_reservations, '_blank')}
+                            type="button"
+                            onClick={() =>
+                              openReservationUrl(
+                                profile.make_reservations || profile.website || "",
+                                toast,
+                                profile.email,
+                              )
+                            }
                           >
                             <ExternalLink size={14} className="mr-2" />
-                            Make Reservation
+                            {profile.make_reservations?.toString().trim() || profile.website?.toString().trim()
+                              ? "Make reservation"
+                              : "Contact by email"}
                           </Button>
+                          {profile.email?.toString().trim() ? (
+                            <Button variant="outline" size="sm" className="w-full" type="button" asChild>
+                              <a href={`mailto:${String(profile.email).trim()}`}>
+                                <Mail size={14} className="mr-2 inline" />
+                                Email only (if the site link fails)
+                              </a>
+                            </Button>
+                          ) : null}
                         </div>
                       )}
                     </CardContent>

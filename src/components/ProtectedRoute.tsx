@@ -17,16 +17,19 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     let cancelled = false;
 
     const verifySession = async () => {
+      // If auth provider is still loading, keep verifying state true
       if (loading) {
         setVerifying(true);
         return;
       }
 
+      // If we already have a user, no need to verify further
       if (user) {
         setVerifying(false);
         return;
       }
 
+      // No user: double-check session to avoid false redirects (StrictMode double init, etc.)
       const { data, error } = await supabase.auth.getSession();
       const hasSession = !!data?.session?.user;
       console.info('ProtectedRoute: verification', { hasSession, error: error?.message });

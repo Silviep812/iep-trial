@@ -1,9 +1,16 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useMemo } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  isHealthWellnessThemeName,
+  isRetreatsThemeName,
+  loadHealthWellnessEventTypeGroups,
+  loadRetreatsEventTypeGroups,
+} from "@/lib/themeEventTypeHierarchy";
+import { plannerToolsCopy } from "@/lib/nudges";
 import { 
   Heart, 
   Building, 
@@ -39,6 +46,8 @@ interface EventThemeSelectorProps {
   userType: string;
   onSelectTheme: (themeId: number, themeName: string) => void;
   selectedTheme?: number;
+  /** When set (workflow wizard), links to Manage Event for full theme, category, and type editing. */
+  eventId?: string;
 }
 
 // Theme icon mapping
@@ -85,6 +94,7 @@ const getThemeStyles = (category: string) => {
     social: { color: "text-green-600", bgColor: "bg-green-50" },
     conference: { color: "text-indigo-600", bgColor: "bg-indigo-50" },
     health: { color: "text-emerald-600", bgColor: "bg-emerald-50" },
+    retreat: { color: "text-teal-700", bgColor: "bg-teal-50" },
   };
   
   return styleMap[category] || { color: "text-gray-600", bgColor: "bg-gray-50" };
@@ -110,6 +120,9 @@ const getCategoryFromName = (themeName: string): string => {
       name.includes('yoga') || name.includes('spa')) {
     return "health";
   }
+  if (name.includes('retreat')) {
+    return "retreat";
+  }
   
   return "social";
 };
@@ -121,11 +134,12 @@ const getThemeDescription = (category: string): string => {
     entertainment: "Ideal for festivals and entertainment events",
     business: "Professional events and corporate gatherings",
     health: "Perfect for wellness retreats, health seminars, and mindful gatherings",
+    retreat: "Corporate retreats, team building, and focused off-site experiences",
   };
   return descriptions[category] || "Versatile theme for any occasion";
 };
 
-export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: EventThemeSelectorProps) => {
+export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme, eventId }: EventThemeSelectorProps) => {
   const navigate = useNavigate();
   const [hoveredTheme, setHoveredTheme] = useState<number | null>(null);
   const [themes, setThemes] = useState<EventTheme[]>([]);
@@ -135,13 +149,30 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
   const [eventTypes, setEventTypes] = useState<any[]>([]);
   const [celebrationThemeId, setCelebrationThemeId] = useState<number | null>(null);
 
+  const [showHwFlow, setShowHwFlow] = useState(false);
+  const [hwThemeId, setHwThemeId] = useState<number | null>(null);
+  const [hwHierarchy, setHwHierarchy] = useState<Awaited<
+    ReturnType<typeof loadHealthWellnessEventTypeGroups>
+  > | null>(null);
+  const [hwPhase, setHwPhase] = useState<"cats" | "types">("cats");
+  const [hwCategoryKey, setHwCategoryKey] = useState<string>("");
+
+  const [showRetreatFlow, setShowRetreatFlow] = useState(false);
+  const [retreatThemeId, setRetreatThemeId] = useState<number | null>(null);
+  const [retreatHierarchy, setRetreatHierarchy] = useState<Awaited<
+    ReturnType<typeof loadRetreatsEventTypeGroups>
+  > | null>(null);
+  const [retreatPhase, setRetreatPhase] = useState<"branch" | "types">("branch");
+  const [retreatBranch, setRetreatBranch] = useState("");
+  const [retreatBranchLabels, setRetreatBranchLabels] = useState<string[]>([]);
+
   // Fetch themes from Supabase
   useEffect(() => {
     const fetchThemes = async () => {
       try {
         setLoading(true);
         const { data, error } = await supabase
-          .from('event_themes')
+          .from('Themes Directory Catalog')
           .select('id, name, description, tags, premium, created_at')
           .order('name');
 
@@ -186,46 +217,85 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
     fetchThemes();
   }, []);
 
-  // Fetch event types when category is selected
+  // Holiday name allow-list — used to split Celebration event_types into Holidays vs Personal,
+  // because the database stores them as flat rows under theme_id with parent_id = null.
+  const HOLIDAY_NAMES = useMemo(
+    () =>
+      new Set([
+        "Christmas",
+        "Easter",
+        "Halloween",
+        "Independence Day",
+        "Labor Day",
+        "Martin Luther King Jr. Day",
+        "Memorial Day",
+        "New Year's Day",
+        "Presidents' Day",
+        "Thanksgiving",
+        "Valentine's Day",
+        "Kwanzaa",
+        "Hanukkah",
+      ]),
+    [],
+  );
+
+  // Fetch ALL Celebration event types once the theme is opened, then partition in-memory.
   useEffect(() => {
     const fetchEventTypes = async () => {
-      if (!selectedCategory || !celebrationThemeId) return;
-
-      // First, fetch the parent category ID (Holidays or Personal)
-      const categoryName = selectedCategory === 'holidays' ? 'Holidays' : 'Personal';
-      const { data: parentData, error: parentError } = await supabase
-        .from('event_types')
-        .select('id')
-        .eq('theme_id', celebrationThemeId)
-        .eq('name', categoryName)
-        .is('parent_id', null)
-        .single();
-
-      if (parentError || !parentData) {
-        console.error('Error fetching parent category:', parentError);
+      if (!celebrationThemeId) {
+        setEventTypes([]);
         return;
       }
 
-      // Then fetch the child event types
       const { data, error } = await supabase
         .from('event_types')
         .select('id, name, theme_id, parent_id')
-        .eq('parent_id', parentData.id)
+        .eq('theme_id', celebrationThemeId)
         .order('name');
 
       if (error) {
-        console.error('Error fetching event types:', error);
+        setEventTypes([]);
         return;
       }
 
-      console.log('Category:', categoryName, 'Parent ID:', parentData.id);
-      console.log('Fetched event types:', data);
-      console.log('Number of event types:', data?.length);
       setEventTypes(data || []);
     };
 
     fetchEventTypes();
-  }, [selectedCategory, celebrationThemeId]);
+  }, [celebrationThemeId]);
+
+  const celebrationTypesForCategory = useMemo(() => {
+    if (!selectedCategory) return [];
+    return eventTypes.filter((t) =>
+      selectedCategory === 'holidays'
+        ? HOLIDAY_NAMES.has(t.name)
+        : !HOLIDAY_NAMES.has(t.name),
+    );
+  }, [eventTypes, selectedCategory, HOLIDAY_NAMES]);
+
+
+  useEffect(() => {
+    loadRetreatsEventTypeGroups().then((r) => {
+      setRetreatBranchLabels(Object.keys(r.typesByBranch));
+    });
+  }, []);
+
+  const displayThemes = useMemo(() => {
+    return themes.map((t) => {
+      const tags = [...(t.tags ?? [])];
+      if (isHealthWellnessThemeName(t.name)) {
+        ["Peaceful", "Spiritual", "Rejuvenating", "Holistic"].forEach((x) => {
+          if (!tags.includes(x)) tags.push(x);
+        });
+      }
+      if (isRetreatsThemeName(t.name) && retreatBranchLabels.length) {
+        retreatBranchLabels.forEach((b) => {
+          if (!tags.includes(b)) tags.push(b);
+        });
+      }
+      return { ...t, tags };
+    });
+  }, [themes, retreatBranchLabels]);
 
   // Define recommended themes based on user type
   const getRecommendedThemes = () => {
@@ -238,16 +308,28 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
     };
     
     const userCategories = recommendedCategories[userType] || [];
-    return themes.filter(theme => userCategories.includes(theme.category));
+    return displayThemes.filter(theme => userCategories.includes(theme.category));
   };
 
   const relevantThemes = getRecommendedThemes();
-  const otherThemes = themes.filter(theme => !relevantThemes.some(rt => rt.id === theme.id));
+  const otherThemes = displayThemes.filter(theme => !relevantThemes.some(rt => rt.id === theme.id));
 
   const handleThemeClick = (theme: EventTheme) => {
     if (theme.name === "Celebration") {
       setCelebrationThemeId(theme.id);
       setShowCelebrationCategories(true);
+    } else if (isHealthWellnessThemeName(theme.name)) {
+      setHwThemeId(theme.id);
+      setShowHwFlow(true);
+      setHwPhase("cats");
+      setHwCategoryKey("");
+      loadHealthWellnessEventTypeGroups().then(setHwHierarchy);
+    } else if (isRetreatsThemeName(theme.name)) {
+      setRetreatThemeId(theme.id);
+      setShowRetreatFlow(true);
+      setRetreatPhase("branch");
+      setRetreatBranch("");
+      loadRetreatsEventTypeGroups().then(setRetreatHierarchy);
     } else {
       onSelectTheme(theme.id, theme.name);
     }
@@ -257,12 +339,35 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
     setSelectedCategory(category);
   };
 
-  const handleEventTypeClick = (eventType: any) => {
-    // Navigate to create event with pre-filled theme and sub-type
-    navigate(`/dashboard/create-event?theme=${celebrationThemeId}&subType=${eventType.name}`);
+  const handleEventTypeClick = (eventType: { id: number; name: string }) => {
+    navigate(
+      `/dashboard/create-event?theme=${celebrationThemeId}&subType=${encodeURIComponent(eventType.name)}&subTypeId=${eventType.id}`,
+    );
   };
 
   const handleBack = () => {
+    if (showHwFlow) {
+      if (hwPhase === "types") {
+        setHwPhase("cats");
+        setHwCategoryKey("");
+      } else {
+        setShowHwFlow(false);
+        setHwThemeId(null);
+        setHwHierarchy(null);
+      }
+      return;
+    }
+    if (showRetreatFlow) {
+      if (retreatPhase === "types") {
+        setRetreatPhase("branch");
+        setRetreatBranch("");
+      } else {
+        setShowRetreatFlow(false);
+        setRetreatThemeId(null);
+        setRetreatHierarchy(null);
+      }
+      return;
+    }
     if (selectedCategory) {
       setSelectedCategory(null);
       setEventTypes([]);
@@ -340,11 +445,198 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
     );
   }
 
+  if (showHwFlow && hwPhase === "types" && hwCategoryKey && hwHierarchy && hwThemeId != null) {
+    const hwTypes = hwHierarchy.groups[hwCategoryKey] ?? [];
+    const label = hwHierarchy.keyLabel[hwCategoryKey] ?? hwCategoryKey;
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={handleBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <div className="text-center flex-1">
+            <h2 className="text-2xl font-bold">Health &amp; Wellness — {label}</h2>
+            <p className="text-sm text-muted-foreground mt-2">Choose an event type (same structure as Browse Event Themes)</p>
+          </div>
+        </div>
+        {hwTypes.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center">{plannerToolsCopy.workflowHwTypesEmpty}</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
+            {hwTypes.map((type) => (
+              <Card
+                key={type.id}
+                className="cursor-pointer transition-all duration-300 hover:scale-105 border-2 hover:border-primary"
+                onClick={() =>
+                  navigate(
+                    `/dashboard/create-event?theme=${hwThemeId}&subType=${encodeURIComponent(type.name)}&subTypeId=${type.id}`,
+                  )
+                }
+              >
+                <CardHeader>
+                  <CardTitle className="text-lg">{type.name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Button className="w-full" variant="outline" size="sm">
+                    Select &amp; Create Event
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (showHwFlow && hwPhase === "cats") {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={handleBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Themes
+          </Button>
+          <div className="text-center flex-1">
+            <h2 className="text-2xl font-bold">Health &amp; Wellness — category</h2>
+            <p className="text-sm text-muted-foreground mt-2">Directory → category → type</p>
+          </div>
+        </div>
+        {!hwHierarchy ? (
+          <div className="flex justify-center p-8">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            {hwHierarchy.orderedCategoryKeys.map((k) => {
+              const pid = hwHierarchy.parentIds[k];
+              if (!pid) return null;
+              const label = hwHierarchy.keyLabel[k] ?? k;
+              return (
+                <Card
+                  key={k}
+                  className="cursor-pointer transition-all duration-300 hover:scale-105 border-2 hover:border-primary"
+                  onClick={() => {
+                    setHwCategoryKey(k);
+                    setHwPhase("types");
+                  }}
+                >
+                  <CardHeader>
+                    <CardTitle className="text-xl text-center">{label}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Button className="w-full" variant="outline">
+                      Choose types
+                    </Button>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (showRetreatFlow && retreatPhase === "branch" && !retreatHierarchy) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 p-12">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="text-sm text-muted-foreground">Loading retreat branches…</span>
+      </div>
+    );
+  }
+
+  if (showRetreatFlow && retreatPhase === "types" && retreatBranch && retreatHierarchy && retreatThemeId != null) {
+    const rTypes = retreatHierarchy.typesByBranch[retreatBranch] ?? [];
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={handleBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <div className="text-center flex-1">
+            <h2 className="text-2xl font-bold">Retreats — {retreatBranch}</h2>
+            <p className="text-sm text-muted-foreground mt-2">Choose an event type</p>
+          </div>
+        </div>
+        {rTypes.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center">{plannerToolsCopy.workflowRetreatTypesEmpty}</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
+            {rTypes.map((type) => (
+              <Card
+                key={type.id}
+                className="cursor-pointer transition-all duration-300 hover:scale-105 border-2 hover:border-primary"
+                onClick={() =>
+                  navigate(
+                    `/dashboard/create-event?theme=${retreatThemeId}&subType=${encodeURIComponent(type.name)}&subTypeId=${type.id}`,
+                  )
+                }
+              >
+                <CardHeader>
+                  <CardTitle className="text-lg">{type.name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Button className="w-full" variant="outline" size="sm">
+                    Select &amp; Create Event
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (showRetreatFlow && retreatPhase === "branch" && retreatHierarchy) {
+    const branches = Object.keys(retreatHierarchy.typesByBranch);
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={handleBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Themes
+          </Button>
+          <div className="text-center flex-1">
+            <h2 className="text-2xl font-bold">Retreats — choose branch</h2>
+            <p className="text-sm text-muted-foreground mt-2">Directory → category → type</p>
+          </div>
+        </div>
+        {branches.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center">{plannerToolsCopy.workflowRetreatBranchesEmpty}</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            {branches.map((b) => (
+              <Card
+                key={b}
+                className="cursor-pointer transition-all duration-300 hover:scale-105 border-2 hover:border-primary"
+                onClick={() => {
+                  setRetreatBranch(b);
+                  setRetreatPhase("types");
+                }}
+              >
+                <CardHeader>
+                  <CardTitle className="text-xl text-center">{b}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Button className="w-full" variant="outline">
+                    View types
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Show event types when category is selected
   if (selectedCategory && eventTypes.length > 0) {
-    console.log('Rendering event types, count:', eventTypes.length);
-    console.log('Event types:', eventTypes);
-    
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-4">
@@ -380,6 +672,49 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
             </Card>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  // Show event-type grid once a Celebration sub-category has been picked.
+  if (showCelebrationCategories && selectedCategory) {
+    const categoryLabel = selectedCategory === 'holidays' ? 'Holidays' : 'Personal';
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={handleBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Categories
+          </Button>
+          <div className="text-center flex-1">
+            <h2 className="text-2xl font-bold">Choose a {categoryLabel} Event</h2>
+          </div>
+        </div>
+
+        {celebrationTypesForCategory.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            No event types found for {categoryLabel}.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
+            {celebrationTypesForCategory.map((t) => (
+              <Card
+                key={t.id}
+                className="cursor-pointer transition-all duration-300 hover:scale-105 border-2 hover:border-primary"
+                onClick={() => handleEventTypeClick({ id: t.id, name: t.name })}
+              >
+                <CardHeader>
+                  <CardTitle className="text-lg text-center">{t.name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Button className="w-full" variant="outline">
+                    Select & Create Event
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -448,16 +783,27 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
       <div className="text-center space-y-2">
         <div className="flex items-center justify-center gap-2 mb-4">
           <Palette className="h-6 w-6 text-primary" />
-          <h2 className="text-2xl font-bold">Choose Event Theme</h2>
+          <h2 className="text-2xl font-bold">Manage Event — theme &amp; category</h2>
         </div>
         <p className="text-muted-foreground max-w-2xl mx-auto">
-          Select an event theme to unlock specialized templates, vendor recommendations, and workflow optimizations.
+          Pick a starting theme for this workflow. For full event details, category, type, and vendor selections, use{" "}
+          {eventId ? (
+            <Link
+              to={`/dashboard/manage-event?eventId=${eventId}`}
+              className="text-primary font-medium underline-offset-4 hover:underline"
+            >
+              Manage Event
+            </Link>
+          ) : (
+            <span className="font-medium text-foreground">Manage Event</span>
+          )}{" "}
+          (Details tab) anytime.
         </p>
       </div>
 
       {themes.length === 0 && !loading && (
         <div className="text-center p-8 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <p className="text-yellow-800">No themes available. Please check your database configuration.</p>
+          <p className="text-yellow-800">{plannerToolsCopy.workflowThemesUnavailable}</p>
         </div>
       )}
 
@@ -490,9 +836,7 @@ export const EventThemeSelector = ({ userType, onSelectTheme, selectedTheme }: E
         <div className="text-center py-8">
           <Palette className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
           <h3 className="text-lg font-semibold mb-2">No themes found</h3>
-          <p className="text-muted-foreground">
-            Please add some event themes to the database to get started.
-          </p>
+          <p className="text-muted-foreground">{plannerToolsCopy.workflowThemesEmptyHint}</p>
         </div>
       )}
     </div>

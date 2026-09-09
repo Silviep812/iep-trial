@@ -20,12 +20,17 @@ const corsHeaders = {
 interface AssignRoleRequest {
   userId: string;
   role: string;
-  permissionLevel?: string;
-  eventId?: string | null;
 }
 
+const ALLOWED_ROLES = new Set([
+  "admin",
+  "event_manager",
+  "task_coordinator",
+  "team_member",
+  "viewer",
+]);
+
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -39,7 +44,6 @@ serve(async (req) => {
       );
     }
 
-    // Verify caller
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabase.auth.getUser(token);
     if (userError || !userData?.user) {
@@ -51,14 +55,17 @@ serve(async (req) => {
 
     const actorId = userData.user.id;
 
-    // Optionally, enforce that only certain roles can assign roles.
-    // For now, allow any authenticated user. If you want restrictions, uncomment below and adapt:
-    // const { data: actorRoles } = await supabase
-    //   .from('user_roles')
-    //   .select('role')
-    //   .eq('user_id', actorId);
-    // const allowed = actorRoles?.some(r => ['admin','event_manager'].includes(r.role));
-    // if (!allowed) { return new Response(JSON.stringify({ success:false, error:'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }) }
+    // Enforce admin-only role assignment to prevent privilege escalation
+    const { data: isAdmin, error: adminErr } = await supabase.rpc(
+      "policy_has_permission_level",
+      { _user_id: actorId, _level: "admin" },
+    );
+    if (adminErr || !isAdmin) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Forbidden: admin role required" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } },
+      );
+    }
 
     const body = (await req.json()) as AssignRoleRequest;
     if (!body?.userId || !body?.role) {
@@ -68,36 +75,29 @@ serve(async (req) => {
       );
     }
 
-    // Insert role using service role to bypass RLS safely
-    const insertData: Record<string, unknown> = {
-      user_id: body.userId,
-      role: body.role as any,
-    };
-    if (body.permissionLevel) {
-      insertData.permission_level = body.permissionLevel;
-    }
-    if (body.eventId !== undefined) {
-      insertData.event_id = body.eventId;
-    }
-
-    const { error: insertError } = await supabase
-      .from("user_roles")
-      .insert(insertData as any);
-
-    if (insertError) {
-      console.error("assign-user-role insert error", insertError);
+    if (!ALLOWED_ROLES.has(body.role)) {
       return new Response(
-        JSON.stringify({ success: false, error: insertError.message }),
+        JSON.stringify({ success: false, error: "Invalid role" }),
+        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } },
+      );
+    }
+
+    const { error: upsertError } = await supabase
+      .from("user_roles")
+      .upsert({ user_id: body.userId, role: body.role as any }, { onConflict: "user_id,role" });
+
+    if (upsertError) {
+      return new Response(
+        JSON.stringify({ success: false, error: upsertError.message }),
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } },
       );
     }
 
     return new Response(
-      JSON.stringify({ success: true }),
+      JSON.stringify({ success: true, assigned_by: actorId }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } },
     );
   } catch (e: any) {
-    console.error("assign-user-role error", e);
     return new Response(
       JSON.stringify({ success: false, error: e?.message || "Unknown error" }),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } },

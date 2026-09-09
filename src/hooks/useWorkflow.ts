@@ -11,12 +11,19 @@ interface WorkflowData {
   hospitality_id?: string;
   venue_id?: string;
   supplier_id?: string;
-  serv_vendor_sup_id?: string;
-  serv_vendor_rent_id?: string;
+  serv_vendor_id?: string;
+  service_rental_buy_id?: string;
   event_id: string; // Now required due to NOT NULL constraint
   created_at?: string;
   updated_at?: string;
 }
+
+const sanitizeWorkflowUpdates = (
+  updates: Partial<Omit<WorkflowData, 'user_id' | 'event_id'>> & { event_id?: string }
+) =>
+  Object.fromEntries(
+    Object.entries(updates).filter(([, v]) => v !== undefined)
+  ) as typeof updates;
 
 export const useWorkflow = () => {
   const { user } = useAuth();
@@ -36,23 +43,35 @@ export const useWorkflow = () => {
     }
   };
 
-  const saveWorkflowType = async (userType: string) => {
+  /**
+   * Persist workflow type (role) for the workflow being edited in the wizard.
+   * Pass `targetWorkflowId` (e.g. page state `workflowIdForEvent`) so we never
+   * update the wrong row — "most recent workflow" is wrong when multiple events exist.
+   */
+  const saveWorkflowType = async (
+    userType: string,
+    targetWorkflowId?: string | null
+  ) => {
     if (!user?.id) return null;
 
     setLoading(true);
     try {
       const workflow_type_id = getUserTypeId(userType);
 
-      // Check if workflow already exists for this user (ordered by most recent)
-      const { data: existingWorkflow } = await supabase
-        .from('workflows')
-        .select('id, workflow_type_id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      let resolvedId = targetWorkflowId || workflowId;
 
-      if (!existingWorkflow) {
+      if (!resolvedId) {
+        const { data: row } = await supabase
+          .from('workflows')
+          .select('id')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        resolvedId = row?.id ?? null;
+      }
+
+      if (!resolvedId) {
         toast({
           title: "Error",
           description: "No workflow found. Please select an event first.",
@@ -61,7 +80,22 @@ export const useWorkflow = () => {
         return null;
       }
 
-      // Update existing workflow with workflow type
+      const { data: existingWorkflow, error: fetchErr } = await supabase
+        .from('workflows')
+        .select('id, workflow_type_id')
+        .eq('id', resolvedId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (fetchErr || !existingWorkflow) {
+        toast({
+          title: "Error",
+          description: "Workflow not found. Go back and select an event again.",
+          variant: "destructive"
+        });
+        return null;
+      }
+
       const { data, error } = await supabase
         .from('workflows')
         .update({ workflow_type_id })
@@ -72,9 +106,10 @@ export const useWorkflow = () => {
       setWorkflowId(existingWorkflow.id);
 
       if (error) {
+        console.error('saveWorkflowType:', error);
         toast({
           title: "Error",
-          description: "Failed to save workflow type",
+          description: error.message || "Failed to save workflow type",
           variant: "destructive"
         });
         return null;
@@ -82,7 +117,7 @@ export const useWorkflow = () => {
 
       // Log the workflow type change
       if (data) {
-        const { error: logError } = await supabase.rpc('log_change', {
+        await supabase.rpc('log_change', {
           p_entity_type: 'workflow',
           p_entity_id: existingWorkflow.id,
           p_action: existingWorkflow.workflow_type_id ? 'updated' : 'created',
@@ -91,10 +126,6 @@ export const useWorkflow = () => {
           p_new_value: workflow_type_id.toString(),
           p_description: `Workflow type ${existingWorkflow.workflow_type_id ? 'changed' : 'set'} to ${userType}`
         });
-
-        if (logError) {
-          console.error('Error logging workflow type change:', logError);
-        }
       }
 
       return data?.id;
@@ -132,20 +163,22 @@ export const useWorkflow = () => {
           return false;
         }
 
+        const payload = sanitizeWorkflowUpdates({
+          ...updates,
+          event_id: updates.event_id!,
+        });
+
         const { data, error } = await supabase
           .from('workflows')
-          .insert({
-            user_id: user.id,
-            event_id: updates.event_id,
-            ...updates
-          })
+          .insert({ ...payload, user_id: user.id } as any)
           .select()
           .single();
 
         if (error) {
+          console.error('create workflow:', error);
           toast({
             title: "Error",
-            description: "Failed to create workflow",
+            description: error.message || "Failed to create workflow",
             variant: "destructive"
           });
           return false;
@@ -153,9 +186,9 @@ export const useWorkflow = () => {
 
         if (data) {
           setWorkflowId(data.id);
-
+          
           // Log workflow creation
-          const { error: logError } = await supabase.rpc('log_change', {
+          await supabase.rpc('log_change', {
             p_entity_type: 'workflow',
             p_entity_id: data.id,
             p_action: 'created',
@@ -164,10 +197,6 @@ export const useWorkflow = () => {
             p_new_value: null,
             p_description: 'New workflow created'
           });
-
-          if (logError) {
-            console.error('Error logging workflow creation:', logError);
-          }
         }
         return true;
       }
@@ -179,17 +208,19 @@ export const useWorkflow = () => {
         .eq('id', effectiveWorkflowId)
         .single();
 
-      // Update existing workflow
+      const cleanUpdates = sanitizeWorkflowUpdates(updates);
+
       const { error } = await supabase
         .from('workflows')
-        .update(updates)
+        .update(cleanUpdates)
         .eq('id', effectiveWorkflowId)
         .eq('user_id', user.id);
 
       if (error) {
+        console.error('updateWorkflowSelections:', error);
         toast({
           title: "Error",
-          description: "Failed to save workflow selections",
+          description: error.message || "Failed to save workflow selections",
           variant: "destructive"
         });
         return false;
@@ -201,16 +232,16 @@ export const useWorkflow = () => {
           theme_id: 'Event Theme',
           hospitality_id: 'Hospitality Selection',
           venue_id: 'Venue Selection',
-          supplier_id: 'External Vendor Selection',
-          serv_vendor_sup_id: 'Service Vendor Selection',
-          serv_vendor_rent_id: 'Service Rental Selection',
+          supplier_id: 'External vendor selection',
+          serv_vendor_id: 'Service Vendor Selection',
+          service_rental_buy_id: 'Service Rental Selection',
           event_id: 'Event Selection',
         };
 
         for (const [key, newValue] of Object.entries(updates)) {
           const oldValue = currentWorkflow[key as keyof typeof currentWorkflow];
           if (oldValue !== newValue && key !== 'updated_at') {
-            const { error: logError } = await supabase.rpc('log_change', {
+            await supabase.rpc('log_change', {
               p_entity_type: 'workflow',
               p_entity_id: effectiveWorkflowId,
               p_action: 'updated',
@@ -219,10 +250,6 @@ export const useWorkflow = () => {
               p_new_value: newValue?.toString() || null,
               p_description: `${fieldLabels[key] || key} ${oldValue ? 'changed' : 'set'}`
             });
-
-            if (logError) {
-              console.error(`Error logging workflow field ${key} change:`, logError);
-            }
           }
         }
       }
@@ -231,7 +258,7 @@ export const useWorkflow = () => {
     } catch (error) {
       console.error('Error updating workflow selections:', error);
       toast({
-        title: "Error",
+        title: "Error", 
         description: "Failed to save workflow selections",
         variant: "destructive"
       });
@@ -276,8 +303,8 @@ export const useWorkflow = () => {
           hospitality_id,
           venue_id,
           supplier_id,
-          serv_vendor_sup_id,
-          serv_vendor_rent_id,
+          serv_vendor_id,
+          service_rental_buy_id,
           event_id,
           created_at,
           updated_at
@@ -311,8 +338,8 @@ export const useWorkflow = () => {
           hospitality_id,
           venue_id,
           supplier_id,
-          serv_vendor_sup_id,
-          serv_vendor_rent_id,
+          serv_vendor_id,
+          service_rental_buy_id,
           event_id,
           created_at,
           updated_at
@@ -347,8 +374,8 @@ export const useWorkflow = () => {
           hospitality_id,
           venue_id,
           supplier_id,
-          serv_vendor_sup_id,
-          serv_vendor_rent_id,
+          serv_vendor_id,
+          service_rental_buy_id,
           event_id,
           created_at,
           updated_at

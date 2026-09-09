@@ -1,20 +1,28 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Calendar, Users, BarChart3, Plus, Settings, Palette, CheckSquare, TrendingUp, Activity, Target, Clock, Eye } from "lucide-react";
+import { Calendar, Users, BarChart3, Plus, Settings, Palette, CheckSquare, Activity, Eye, LayoutDashboard, ClipboardList } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import Analytics from "@/components/Analytics";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { trialBannerText } from "@/lib/trialLimits";
+import { plannerToolsCopy } from "@/lib/nudges";
+import { cn } from "@/lib/utils";
+import { getDashboardRecentEventStatusBadge } from "@/lib/eventStatus";
+import { useCreateEventEntryPath } from "@/hooks/useCreateEventEntryPath";
 
 const DashboardHome = () => {
+  const navigate = useNavigate();
+  const createEventPath = useCreateEventEntryPath();
   const [analytics, setAnalytics] = useState({
     totalEvents: 0,
     taskCompletionRate: 0,
     resourceUtilization: 0,
-    leadConversion: 0,
     recentEvents: []
   });
   const [loading, setLoading] = useState(true);
@@ -31,25 +39,28 @@ const DashboardHome = () => {
     const fetchDashboardAnalytics = async () => {
       try {
         setLoading(true);
-
+        
         // Get current user
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('User not authenticated');
 
         const userId = user.id as string;
 
-        // Fetch events accessible to the current user (RLS handles owner + collaborator access)
+        // Fetch events data for current user only (exclude archived from the main list)
         const { data: events, error: eventsError } = await supabase
           .from('events')
-          .select('id, user_id, title, description, start_date, created_at')
+          .select('id, user_id, title, description, start_date, end_date, created_at, venue, status, archived')
+          .eq('user_id', userId)
+          .neq('archived', true)
           .order('created_at', { ascending: false })
           .limit(10);
         if (eventsError) throw eventsError;
 
-        // Fetch tasks accessible to the current user (RLS handles owner + assigned tasks)
+        // Fetch tasks data for current user only
         const { data: tasks, error: tasksError } = await supabase
           .from('tasks')
-          .select('*');
+          .select('*')
+          .eq('created_by', userId);
         if (tasksError) throw tasksError;
 
         // Get all event IDs for this user
@@ -84,14 +95,13 @@ const DashboardHome = () => {
           totalEvents,
           taskCompletionRate,
           resourceUtilization,
-          leadConversion: 13, // Placeholder
           recentEvents: events?.slice(0, 3) || []
         });
       } catch (error) {
         console.error('Error fetching dashboard analytics:', error);
         toast({
           title: "Error",
-          description: "Failed to fetch dashboard data",
+          description: plannerToolsCopy.dashboardLoadFailed,
           variant: "destructive",
         });
       } finally {
@@ -116,127 +126,116 @@ const DashboardHome = () => {
           type: 'task' | 'analytics' | 'resource';
         }> = [];
 
-        // 1. Fetch change_logs for the user
+        // Fetch all cm_change_logs for the user
         const { data: changeLogs } = await supabase
           .from('cm_change_logs')
           .select('id, entity_type, action, created_at, field_name, old_value, new_value, change_description, entity_id')
           .eq('changed_by', user.id)
           .order('created_at', { ascending: false })
-          .limit(15);
+          .limit(20);
 
-        // Fetch events for the activity feed (RLS handles scoping)
-        const { data: userEvents } = await supabase
-          .from('events')
-          .select('id, title');
-
-        const userEventIds = (userEvents || []).map(e => e.id);
-        const eventTitleMap: Record<string, string> = {};
-        (userEvents || []).forEach(e => { eventTitleMap[e.id] = e.title; });
-
-        if (userEventIds.length > 0) {
-          const { data: recentBudgetItems } = await supabase
-            .from('budget_items')
-            .select('id, item_name, category, event_id, created_at')
-            .in('event_id', userEventIds)
-            .order('created_at', { ascending: false })
-            .limit(5);
-
-          (recentBudgetItems || []).forEach(item => {
-            activitiesData.push({
-              id: `budget-${item.id}`,
-              description: `Budget item "${item.item_name}" (${item.category}) added${eventTitleMap[item.event_id] ? ` in ${eventTitleMap[item.event_id]}` : ''}`,
-              timestamp: item.created_at,
-              type: 'resource',
-            });
-          });
-
-          // 3. Fetch recent checklist updates (tasks with non-empty checklist updated recently)
-          const { data: recentChecklistTasks } = await supabase
-            .from('tasks')
-            .select('id, title, event_id, updated_at, checklist')
-            .in('event_id', userEventIds)
-            .not('checklist', 'is', null)
-            .order('updated_at', { ascending: false })
-            .limit(5);
-
-          (recentChecklistTasks || []).forEach(task => {
-            const checklist = task.checklist as any[];
-            if (checklist && checklist.length > 0) {
-              const completed = checklist.filter((c: any) => c.completed || c.checked).length;
-              activitiesData.push({
-                id: `checklist-${task.id}`,
-                description: `Checklist updated: "${task.title}" (${completed}/${checklist.length} done)${eventTitleMap[task.event_id] ? ` in ${eventTitleMap[task.event_id]}` : ''}`,
-                timestamp: task.updated_at,
-                type: 'task',
-              });
-            }
-          });
-
-          // 4. Fetch recent change request approvals
-          const { data: recentApprovals } = await supabase
-            .from('change_requests')
-            .select('id, title, status, updated_at, event_id')
-            .in('event_id', userEventIds)
-            .in('status', ['approved', 'applied'])
-            .order('updated_at', { ascending: false })
-            .limit(5);
-
-          (recentApprovals || []).forEach(cr => {
-            activitiesData.push({
-              id: `approval-${cr.id}`,
-              description: `Change request "${cr.title}" ${cr.status}${eventTitleMap[cr.event_id || ''] ? ` in ${eventTitleMap[cr.event_id || '']}` : ''}`,
-              timestamp: cr.updated_at,
-              type: 'analytics',
-            });
-          });
-        }
-
-        // Map event names for change logs
+        // Map event names for all change logs
         let changeLogEventMap: Record<string, string> = {};
+        let allEventTitles: Record<string, string> = {};
         if (changeLogs && changeLogs.length > 0) {
+          // Collect all possible event_ids from entity_id (for budget_item, workflow, task, etc.)
           const budgetItemIds = changeLogs.filter(log => log.entity_type === 'budget_item').map(log => log.entity_id).filter(Boolean);
+          const workflowIds = changeLogs.filter(log => log.entity_type === 'workflow').map(log => log.entity_id).filter(Boolean);
           const taskIds = changeLogs.filter(log => log.entity_type === 'task').map(log => log.entity_id).filter(Boolean);
-
+          // Fetch event_ids for each type
+          let eventIds: string[] = [];
+          // Budget items
           if (budgetItemIds.length > 0) {
-            const { data: budgetItems } = await supabase.from('budget_items').select('id, event_id').in('id', budgetItemIds);
-            (budgetItems || []).forEach(item => { changeLogEventMap[item.id] = item.event_id; });
+            const { data: budgetItems } = await supabase
+              .from('budget_items')
+              .select('id, event_id')
+              .in('id', budgetItemIds);
+            (budgetItems || []).forEach(item => {
+              changeLogEventMap[item.id] = item.event_id;
+              eventIds.push(item.event_id);
+            });
           }
+          // Workflows
+          if (workflowIds.length > 0) {
+            const { data: workflows } = await supabase
+              .from('workflows')
+              .select('id, event_id')
+              .in('id', workflowIds);
+            (workflows || []).forEach(w => {
+              changeLogEventMap[w.id] = w.event_id;
+              eventIds.push(w.event_id);
+            });
+          }
+          // Tasks
           if (taskIds.length > 0) {
-            const { data: tasks } = await supabase.from('tasks').select('id, event_id').in('id', taskIds);
-            (tasks || []).forEach(t => { changeLogEventMap[t.id] = t.event_id; });
+            const { data: tasks } = await supabase
+              .from('tasks')
+              .select('id, event_id')
+              .in('id', taskIds);
+            (tasks || []).forEach(t => {
+              changeLogEventMap[t.id] = t.event_id;
+              eventIds.push(t.event_id);
+            });
+          }
+          // Remove duplicates
+          eventIds = Array.from(new Set(eventIds.filter(Boolean)));
+          // Fetch event titles
+          if (eventIds.length > 0) {
+            const { data: events } = await supabase
+              .from('events')
+              .select('id, title')
+              .in('id', eventIds);
+            (events || []).forEach(event => {
+              allEventTitles[event.id] = event.title;
+            });
           }
         }
 
         if (changeLogs) {
           changeLogs.forEach(log => {
             let description = '';
+            // Format date fields
             const dateFields = ['due_date', 'start_date', 'end_date'];
             if (dateFields.includes(log.field_name)) {
               const formatDate = (dateStr: string) => {
                 if (!dateStr) return '';
                 const d = new Date(dateStr);
                 if (isNaN(d.getTime())) return dateStr;
-                return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
+                return `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}/${d.getFullYear()}`;
               };
               description = `${log.entity_type} ${log.field_name.replace('_', ' ')} changed from "${formatDate(log.old_value)}" to "${formatDate(log.new_value)}"`;
+            
+            } else if (log.field_name === "resource_assignments") {
+              description = "Task linked resources updated";
+            } else if (log.field_name === "title" || log.field_name === "status") {
+              description = `${log.entity_type} ${String(log.field_name).replace("_", " ")} updated`;
+            } else if (log.entity_type === 'workflow') {
+              description = `${log.entity_type} ${log.field_name.replace('_', ' ')} changed`;
             } else if (log.field_name && log.old_value && log.new_value) {
               description = `${log.entity_type} ${log.field_name.replace('_', ' ')} changed from "${log.old_value}" to "${log.new_value}"`;
             } else if (log.action === 'created') {
               description = `${log.entity_type} created`;
-            } else if (log.action === 'approved') {
-              description = `${log.entity_type} approved`;
-            } else if (log.action === 'applied') {
-              description = `${log.entity_type} changes applied`;
+            } else if (log.action === 'updated') {
+              description = `${log.entity_type} ${log.field_name ? log.field_name.replace('_', ' ') : ''} updated`.trim();
+            } else if (log.action === 'deleted') {
+              description = `${log.entity_type} deleted`;
             } else {
               description = `${log.entity_type} ${log.action}`;
             }
+            // Append event name if available
             const eventId = changeLogEventMap[log.entity_id];
-            const eventName = eventId ? eventTitleMap[eventId] : null;
-            if (eventName) description += ` in ${eventName}`;
+            const eventName = eventId ? allEventTitles[eventId] : null;
+            if (eventName && eventName !== 'Unnamed Event') {
+              description += ` in ${eventName}`;
+            }
 
+            // Determine activity type based on entity_type
             let activityType: 'task' | 'analytics' | 'resource' = 'resource';
-            if (log.entity_type === 'task') activityType = 'task';
-            else if (log.action === 'approved' || log.action === 'applied') activityType = 'analytics';
+            if (log.entity_type === 'task') {
+              activityType = 'task';
+            } else if (log.entity_type === 'event_analytics') {
+              activityType = 'analytics';
+            }
 
             activitiesData.push({
               id: `log-${log.id}`,
@@ -247,9 +246,12 @@ const DashboardHome = () => {
           });
         }
 
-        // Sort and deduplicate
-        activitiesData.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        setActivities(activitiesData.slice(0, 15));
+        // Sort all activities by timestamp
+        activitiesData.sort((a, b) => 
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+
+        setActivities(activitiesData.slice(0, 10));
       } catch (error) {
         console.error('Error fetching activities:', error);
       }
@@ -262,31 +264,35 @@ const DashboardHome = () => {
     {
       title: "Total Events",
       value: loading ? "..." : analytics.totalEvents.toString(),
-      description: "Active events this month",
+      description: "Events you own (up to 10 loaded for this snapshot)",
       icon: Calendar,
-      trend: "+12%",
       color: "primary"
     },
     {
       title: "Task Completion",
       value: loading ? "..." : `${analytics.taskCompletionRate}%`,
-      description: "Average completion rate",
+      description: "Your tasks marked completed ÷ all tasks you created",
       icon: CheckSquare,
-      trend: "+8%",
       color: "secondary"
     },
     {
       title: "Resource Efficiency",
       value: loading ? "..." : `${analytics.resourceUtilization}%`,
-      description: "Resource utilization rate",
+      description: "Allocated ÷ capacity across resources on your events",
       icon: Activity,
-      trend: "+5%",
       color: "accent"
     },
   ];
 
+  const trialMsg = trialBannerText();
+
   return (
     <div className="space-y-6">
+      {trialMsg ? (
+        <Alert>
+          <AlertDescription>{trialMsg}</AlertDescription>
+        </Alert>
+      ) : null}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
@@ -297,7 +303,27 @@ const DashboardHome = () => {
           </p>
         </div>
       </div>
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-1">
+          <Button
+            variant="default"
+            size="sm"
+            className="flex items-center gap-2"
+            onClick={() => navigate("/dashboard")}
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            All Events (Portfolio)
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-2"
+            onClick={() => navigate("/dashboard/manage-event")}
+          >
+            <ClipboardList className="h-4 w-4" />
+            My Event (Workspace)
+          </Button>
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => window.location.href = '/dashboard/workflow-dashboard'}>
             <Settings className="h-4 w-4 mr-2" />
@@ -311,9 +337,9 @@ const DashboardHome = () => {
             <CheckSquare className="h-4 w-4 mr-2" />
             Manage Projects
           </Button>
-          <Button variant="outline" onClick={() => window.location.href = '/dashboard/create-event'} className="flex items-center gap-2 bg-gradient-primary hover:opacity-90">
+          <Button variant="outline" onClick={() => navigate(createEventPath)} className="flex items-center gap-2 bg-gradient-primary hover:opacity-90">
             <Plus className="h-4 w-4" />
-            Create New Event
+            Create event
           </Button>
         </div>
       </div>
@@ -336,15 +362,9 @@ const DashboardHome = () => {
               </CardHeader>
               <CardContent className="relative">
                 <div className="text-2xl font-bold">{stat.value}</div>
-                <div className="flex items-center space-x-2">
-                  <div className="flex items-center text-xs text-green-600">
-                    <TrendingUp className="h-3 w-3 mr-1" />
-                    {stat.trend}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {stat.description}
-                  </p>
-                </div>
+                <p className="text-xs text-muted-foreground pt-1 leading-snug">
+                  {stat.description}
+                </p>
               </CardContent>
             </Card>
           );
@@ -388,17 +408,30 @@ const DashboardHome = () => {
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                     </div>
                   ) : analytics.recentEvents.length > 0 ? (
-                    analytics.recentEvents.map((event: any, index) => (
-                      <div key={event.userid || index} className="flex items-center justify-between p-3 rounded-lg bg-gradient-success bg-opacity-10">
+                    analytics.recentEvents.map((event: any, index) => {
+                      const badge = getDashboardRecentEventStatusBadge(event);
+                      return (
+                      <div key={event.id ?? index} className="flex items-center justify-between p-3 rounded-lg bg-gradient-success bg-opacity-10">
                         <div>
                           <p className="font-medium">{event.title || event.description || 'Unnamed Event'}</p>
-                          <p className="text-sm text-muted-foreground">{event.description || 'Event'} • {new Date(event.start_date + 'T00:00:00').toLocaleDateString()}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {event.description || 'Event'} •{' '}
+                            {event.start_date
+                              ? new Date(String(event.start_date).split('T')[0] + 'T00:00:00').toLocaleDateString()
+                              : 'Date TBD'}
+                          </p>
                         </div>
-                        <span className="px-2 py-1 text-xs rounded-full bg-gradient-success text-white">
-                          Active
+                        <span
+                          className={cn(
+                            "px-2 py-1 text-xs rounded-full capitalize shrink-0",
+                            badge.className,
+                          )}
+                        >
+                          {badge.label}
                         </span>
                       </div>
-                    ))
+                    );
+                    })
                   ) : (
                     <div className="text-center p-8 text-muted-foreground">
                       <Calendar className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -452,24 +485,25 @@ const DashboardHome = () => {
             </CardHeader>
             <CardContent className="relative">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   className="w-full justify-start bg-gradient-primary bg-opacity-10 border-primary/20 hover:text-white transition-all duration-300"
-                  onClick={() => window.location.href = '/dashboard/create-event'}
+                  type="button"
+                  onClick={() => navigate("/dashboard/manage-event")}
                 >
-                  <Calendar className="mr-2 h-4 w-4" />
-                  Schedule New Event
+                  <Plus className="mr-2 h-4 w-4" />
+                  + Change Request
                 </Button>
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   className="w-full justify-start bg-gradient-secondary bg-opacity-10 border-secondary/20 hover:text-white transition-all duration-300"
                   onClick={() => window.location.href = '/dashboard/collaborate'}
                 >
                   <Users className="mr-2 h-4 w-4" />
                   Manage Team
                 </Button>
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   className="w-full justify-start bg-gradient-accent bg-opacity-10 border-accent/20 hover:text-white transition-all duration-300"
                   onClick={() => window.location.href = '/dashboard/analytics'}
                 >
@@ -482,7 +516,7 @@ const DashboardHome = () => {
         </TabsContent>
 
         <TabsContent value="analytics">
-          <Analytics
+          <Analytics 
             onInteractionTrack={(interaction) => {
               console.log('Dashboard analytics interaction:', interaction);
             }}
@@ -509,7 +543,7 @@ const DashboardHome = () => {
                       analytics: 'bg-primary',
                       resource: 'bg-accent'
                     };
-
+                    
                     const getRelativeTime = (timestamp: string) => {
                       const now = new Date();
                       const then = new Date(timestamp);
@@ -517,7 +551,7 @@ const DashboardHome = () => {
                       const diffMins = Math.floor(diffMs / 60000);
                       const diffHours = Math.floor(diffMs / 3600000);
                       const diffDays = Math.floor(diffMs / 86400000);
-
+                      
                       if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
                       if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
                       return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;

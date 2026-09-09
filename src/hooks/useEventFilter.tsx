@@ -6,6 +6,9 @@ interface Event {
   id: string;
   title: string;
   start_date?: string;
+  end_date?: string | null;
+  status?: string | null;
+  archived?: boolean | null;
 }
 
 export function useEventFilter() {
@@ -17,21 +20,18 @@ export function useEventFilter() {
   useEffect(() => {
     const fetchUserEvents = async () => {
       if (!user) return;
-
+      
       setEventsLoading(true);
       try {
         const { data, error } = await supabase
           .from('events')
-          .select('id, title, start_date')
+          .select('id, title, start_date, end_date, status, archived')
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false });
-
+        
         if (error) throw error;
-        // Filter out archived (2025 and older) events — they belong in Manage Event's Archive tab
-        const activeEvents = (data || []).filter(e => {
-          if (!e.start_date) return true;
-          return new Date(e.start_date).getFullYear() > 2025;
-        });
-        setEvents(activeEvents);
+        const rows = (data || []).filter((e) => e.archived !== true);
+        setEvents(rows);
       } catch (error) {
         console.error('Error fetching events:', error);
       } finally {
@@ -41,16 +41,20 @@ export function useEventFilter() {
 
     fetchUserEvents();
 
-    // Set up real-time subscription for events
+    // Each hook instance needs its own channel name. Reusing `events-changes` across
+    // ProjectManagement + TaskManager + BudgetTracker hits the same Realtime channel
+    // after subscribe() and throws: cannot add postgres_changes callbacks after subscribe().
     if (user) {
+      const channelName = `events-changes-${crypto.randomUUID()}`;
       const channel = supabase
-        .channel('events-changes')
+        .channel(channelName)
         .on(
           'postgres_changes',
           {
             event: '*',
             schema: 'public',
-            table: 'events'
+            table: 'events',
+            filter: `user_id=eq.${user.id}`
           },
           () => {
             fetchUserEvents();

@@ -21,12 +21,10 @@ export const createTaskSchema = z.object({
     ),
   due_date: z.string().optional(),
   dependencies: z.array(z.string()).optional(),
-  assignment_type: z.string()
-    .min(1, { message: "Assignment type is required" }),
   assigned_coordinator_name: z.string()
     .trim()
-    .min(1, { message: "Collaborator name is required" })
     .max(100, { message: "Coordinator name must be less than 100 characters" })
+    .optional()
 });
 
 export const updateTaskSchema = z.object({

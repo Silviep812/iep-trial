@@ -1,17 +1,17 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
-import { ChevronDown } from "lucide-react";
 import { PermissionLevel } from "@/lib/permissions";
+import { eventSelectLifecycleLabel } from "@/lib/eventStatus";
 
 interface Event {
   id: string;
   title: string;
-  start_date: string;
+  start_date?: string;
+  end_date?: string | null;
+  status?: string | null;
+  archived?: boolean | null;
 }
 
 interface UnassignedUserCardProps {
@@ -24,81 +24,20 @@ interface UnassignedUserCardProps {
   events: Event[];
   permissionLevels: Record<string, { label: string; description: string }>;
   permissionMappings: Map<string, PermissionLevel>;
-  selectedEventFilter?: string;
   onAssign: (userId: string, role: string, permissionLevel: PermissionLevel, eventId: string | null) => void;
 }
 
-export function UnassignedUserCard({
-  user,
-  roles,
+export function UnassignedUserCard({ 
+  user, 
+  roles, 
   events,
-  permissionLevels,
-  permissionMappings,
-  selectedEventFilter,
-  onAssign
+  permissionLevels, 
+  permissionMappings, 
+  onAssign 
 }: UnassignedUserCardProps) {
-  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
+  const [selectedRole, setSelectedRole] = useState('');
   const [selectedPermission, setSelectedPermission] = useState<PermissionLevel>('viewer');
-  const [selectedEvent, setSelectedEvent] = useState<string>(
-    selectedEventFilter && selectedEventFilter !== "all" ? selectedEventFilter : 'global'
-  );
-  const [isAssigning, setIsAssigning] = useState(false);
-
-  useEffect(() => {
-    if (selectedEventFilter && selectedEventFilter !== "all") {
-      setSelectedEvent(selectedEventFilter);
-    } else if (selectedEventFilter === "all") {
-      setSelectedEvent('global');
-    }
-  }, [selectedEventFilter]);
-
-  useEffect(() => {
-    const isRestrictedRole = selectedRoles.some(r => r === 'sponsor' || r === 'stakeholder');
-    if (isRestrictedRole && selectedPermission !== 'viewer') {
-      setSelectedPermission('viewer');
-    }
-  }, [selectedRoles, selectedPermission]);
-
-  const toggleRole = (roleValue: string) => {
-    setSelectedRoles(prev => {
-      const next = prev.includes(roleValue)
-        ? prev.filter(r => r !== roleValue)
-        : [...prev, roleValue];
-
-      // If we just added a role, update permission based on mapping
-      if (!prev.includes(roleValue)) {
-        const isRestrictedNext = next.some(r => r === 'sponsor' || r === 'stakeholder');
-        if (isRestrictedNext) {
-          setSelectedPermission('viewer');
-        } else {
-          const suggested = permissionMappings.get(roleValue) || 'viewer';
-          setSelectedPermission(suggested);
-        }
-      }
-      return next;
-    });
-  };
-
-  const handleAssign = async () => {
-    if (selectedRoles.length === 0) return;
-    setIsAssigning(true);
-    const finalEventId = selectedEvent === 'global' ? null : selectedEvent;
-
-    // Check if any selected roles are restricted
-    const hasRestrictedRole = selectedRoles.some(r => r === 'sponsor' || r === 'stakeholder');
-
-    for (const role of selectedRoles) {
-      // If restricted, always use 'viewer'. Otherwise use mapped or selected permission.
-      const isRestricted = role === 'sponsor' || role === 'stakeholder';
-      const perm = (isRestricted || hasRestrictedRole) ? 'viewer' : (permissionMappings.get(role) || selectedPermission);
-      await onAssign(user.id, role, (perm as PermissionLevel), finalEventId);
-    }
-    setSelectedRoles([]);
-    setIsAssigning(false);
-  };
-
-  const selectedLabels = selectedRoles.map(r => roles.find(role => role.value === r)?.label).filter(Boolean);
-  const isRestrictedRole = selectedRoles.some(r => r === 'sponsor' || r === 'stakeholder');
+  const [selectedEvent, setSelectedEvent] = useState<string>('global');
 
   return (
     <Card className="border-dashed">
@@ -117,7 +56,7 @@ export function UnassignedUserCard({
               </Badge>
             </div>
           </div>
-
+          
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <label className="text-xs text-muted-foreground mb-1 block">Event</label>
@@ -133,74 +72,72 @@ export function UnassignedUserCard({
                   {events.map((event) => (
                     <SelectItem key={event.id} value={event.id}>
                       {event.title || `Event ${event.id.slice(0, 8)}`}
+                      <span className="text-muted-foreground">{` · ${eventSelectLifecycleLabel(event)}`}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
+            
             <div className="flex-1">
-              <label className="text-xs text-muted-foreground mb-1 block">Role Types (select all that apply)</label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-between font-normal">
-                    <span className="truncate">
-                      {selectedLabels.length > 0
-                        ? selectedLabels.length <= 2
-                          ? selectedLabels.join(', ')
-                          : `${selectedLabels.length} roles selected`
-                        : 'Select roles...'}
-                    </span>
-                    <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[240px] p-2 bg-popover z-50" align="start">
-                  <div className="space-y-1">
-                    {roles.map((role) => (
-                      <label
-                        key={role.value}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent cursor-pointer text-sm"
-                      >
-                        <Checkbox
-                          checked={selectedRoles.includes(role.value)}
-                          onCheckedChange={() => toggleRole(role.value)}
-                        />
-                        {role.label}
-                      </label>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+              <label className="text-xs text-muted-foreground mb-1 block">Role</label>
+              <Select
+                value={selectedRole}
+                onValueChange={(role) => {
+                  setSelectedRole(role);
+                  const suggested = permissionMappings.get(role) || 'viewer';
+                  setSelectedPermission(suggested);
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select role..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.map((role) => (
+                    <SelectItem key={role.value} value={role.value}>
+                      {role.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-
+            
             <div className="flex-1">
-              <label className="text-xs text-muted-foreground mb-1 block">Permission Level</label>
+              <label className="text-xs text-muted-foreground mb-1 block">
+                Permission Level
+                {permissionMappings.get(selectedRole) === selectedPermission && (
+                  <span className="text-xs text-muted-foreground ml-1">(suggested)</span>
+                )}
+              </label>
               <Select
                 value={selectedPermission}
                 onValueChange={(perm) => setSelectedPermission(perm as PermissionLevel)}
-                disabled={selectedRoles.length === 0 || isRestrictedRole}
+                disabled={!selectedRole}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(permissionLevels)
-                    .filter(([key]) => !isRestrictedRole || key === 'viewer')
-                    .map(([key, level]) => (
-                      <SelectItem key={key} value={key}>
-                        {level.label}
-                      </SelectItem>
-                    ))}
+                  {Object.entries(permissionLevels).map(([key, level]) => (
+                    <SelectItem key={key} value={key}>
+                      {level.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-
+            
             <button
-              onClick={handleAssign}
-              disabled={selectedRoles.length === 0 || isAssigning}
+              onClick={() => {
+                if (selectedRole) {
+                  const finalEventId = selectedEvent === 'global' ? null : selectedEvent;
+                  onAssign(user.id, selectedRole, selectedPermission, finalEventId);
+                }
+              }}
+              disabled={!selectedRole}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed mt-5"
             >
-              {isAssigning ? 'Assigning...' : 'Assign'}
+              Assign
             </button>
           </div>
         </div>

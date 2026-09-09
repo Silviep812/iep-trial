@@ -5,15 +5,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Wrench, Users, Camera, UtensilsCrossed, Music, Car, CheckCircle2, Building } from "lucide-react";
+import { Wrench, Users, Camera, UtensilsCrossed, Music, Car, CheckCircle2, Building, Mail, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { workflowPlannerCopy } from "@/lib/nudges";
+import { DirectoryProfileLink } from "@/components/resource-directory/DirectoryProfileLink";
+
+/**
+ * Data: `vendor` / `service_rental_buy` (equipment & service partners).
+ * External procurement vendors use `suppliers` — see SupplierSelector (next wizard step).
+ */
 
 interface VendorSupplier {
   id: string;
   business_name: string;
   contact_name: string | null;
   email: string;
-  phone_number: string;
+  phone_number?: string | null;
   city: string;
   state: string;
   zip: string;
@@ -34,7 +42,7 @@ interface VendorRental {
   business_name: string;
   contact_name: string | null;
   email: string;
-  phone_number: string;
+  phone_number?: string | null;
   city: string;
   state: string;
   zip: string;
@@ -51,7 +59,7 @@ interface VendorRentalType {
 
 interface VendorRentalAssignment {
   id: number;
-  serv_vendor_rental_id: string;
+  service_rental_buy_id: string;
   vendor_rental_type_id: number;
   created_at: string;
   updated_at: string;
@@ -65,6 +73,8 @@ interface Service {
   contact_name?: string;
   location: string;
   description: string;
+  /** Contact is email-only in the UI (no phone). */
+  email?: string;
 }
 
 interface ServiceSelectorProps {
@@ -111,11 +121,11 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
 
       // Fetch all data in parallel
       const [vendorsResult, vendorTypesResult, rentalsResult, rentalTypesResult, assignmentsResult] = await Promise.all([
-        supabase.from('serv_vendor_suppliers').select('*'),
+        supabase.from('vendor').select('*'),
         supabase.from('vendor_supplier_types').select('*'),
-        supabase.from('serv_vendor_rentals').select('*'),
+        supabase.from('service_rental_buy').select('*'),
         supabase.from('vendor_rental_types').select('*'),
-        supabase.from('serv_vendor_rental_assignments').select('*')
+        supabase.from('service_rental_buy_assignments').select('*')
       ]);
 
       if (vendorsResult.error) throw vendorsResult.error;
@@ -148,7 +158,8 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
       business_name: vendor.business_name || "Unknown Business",
       contact_name: vendor.contact_name || undefined,
       location: location,
-      description: `Email: ${vendor.email} | Phone: ${vendor.phone_number}`
+      description: vendor.email?.trim() ? "Contact via email below." : "Add email on file to enable contact.",
+      email: vendor.email?.trim() || undefined,
     };
   });
 
@@ -156,7 +167,7 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
   const convertedRentals: Service[] = rentals.map(rental => {
     // Find all rental types for this rental vendor through assignments
     const rentalTypeIds = rentalAssignments
-      .filter(assignment => assignment.serv_vendor_rental_id === rental.id)
+      .filter(assignment => assignment.service_rental_buy_id === rental.id)
       .map(assignment => assignment.vendor_rental_type_id);
     
     const associatedTypes = rentalTypes
@@ -173,7 +184,8 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
       business_name: rental.business_name || "Unknown Business",
       contact_name: rental.contact_name || undefined,
       location: location,
-      description: `Email: ${rental.email} | Phone: ${rental.phone_number}`
+      description: rental.email?.trim() ? "Contact via email below." : "Add email on file to enable contact.",
+      email: rental.email?.trim() || undefined,
     };
   });
 
@@ -207,6 +219,11 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <Alert className="border-primary/30 bg-primary/5">
+            <Info className="h-4 w-4" />
+            <AlertTitle>{workflowPlannerCopy.serviceSelectorAlertTitle}</AlertTitle>
+            <AlertDescription className="text-sm">{workflowPlannerCopy.serviceSelectorAlertBody}</AlertDescription>
+          </Alert>
           {/* Filters */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -301,14 +318,35 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
                                     <strong>Contact:</strong> {service.contact_name}
                                   </p>
                                 )}
+                                {service.email?.trim() ? (
+                                  <div className="flex items-start gap-1 text-xs">
+                                    <Mail className="h-3 w-3 shrink-0 mt-0.5 text-muted-foreground" />
+                                    <a
+                                      href={`mailto:${service.email.trim()}`}
+                                      className="text-primary hover:underline break-all"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {service.email}
+                                    </a>
+                                  </div>
+                                ) : null}
                                 <p className="text-xs">
                                   <strong>Location:</strong> {service.location}
                                 </p>
                                 <p className="text-xs">{service.description}</p>
+                                <DirectoryProfileLink kind="vendor" id={service.id} className="text-xs mt-1" />
                               </div>
                             </div>
                             <div className="flex gap-2">
-                              <Button className="flex-1" size="sm">
+                              <Button
+                                type="button"
+                                className="flex-1"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectServiceVendor(service.id);
+                                }}
+                              >
                                 {isSelected ? "Selected" : "Select Service"}
                               </Button>
                             </div>
@@ -387,14 +425,35 @@ export function ServiceSelector({ onSelectServiceVendor, onSelectServiceRental, 
                                     <strong>Contact:</strong> {service.contact_name}
                                   </p>
                                 )}
+                                {service.email?.trim() ? (
+                                  <div className="flex items-start gap-1 text-xs">
+                                    <Mail className="h-3 w-3 shrink-0 mt-0.5 text-muted-foreground" />
+                                    <a
+                                      href={`mailto:${service.email.trim()}`}
+                                      className="text-primary hover:underline break-all"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {service.email}
+                                    </a>
+                                  </div>
+                                ) : null}
                                 <p className="text-xs">
                                   <strong>Location:</strong> {service.location}
                                 </p>
                                 <p className="text-xs">{service.description}</p>
+                                <DirectoryProfileLink kind="service_rental_buy" id={service.id} className="text-xs mt-1" />
                               </div>
                             </div>
                             <div className="flex gap-2">
-                              <Button className="flex-1" size="sm">
+                              <Button
+                                type="button"
+                                className="flex-1"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectServiceRental(service.id);
+                                }}
+                              >
                                 {isSelected ? "Selected" : "Select Rental"}
                               </Button>
                             </div>

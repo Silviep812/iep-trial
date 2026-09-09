@@ -1,30 +1,35 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar, MapPin, CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useWorkflow } from "@/hooks/useWorkflow";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
+import { getLifecycleTableBadge } from "@/lib/eventStatus";
 
 interface Event {
   id: string;
   user_id: string;
   title: string;
-  description: string;
+  description: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  status?: string | null;
+  archived?: boolean | null;
 }
 
 interface EventSelectorProps {
   onSelectEvent: (eventId: string) => void;
   selectedEvent?: string;
+  /** Bump when workflows/events change so the list of events-without-workflow refetches */
+  refreshKey?: number;
 }
 
-export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorProps) {
+export function EventSelector({ onSelectEvent, selectedEvent, refreshKey = 0 }: EventSelectorProps) {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
-  const { updateWorkflowSelections } = useWorkflow();
   const { toast } = useToast();
 
   useEffect(() => {
@@ -35,9 +40,12 @@ export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorPro
         // Fetch all events
         const { data: eventsData, error: eventsError } = await supabase
           .from("events")
-          .select("id, user_id, title, description")
+          .select("id, user_id, title, description, status, archived")
           .eq("user_id", user.id)
+          .neq("archived", true)
+          .not("status", "in", "(completed,archived,cancelled)")
           .order("start_date", { ascending: true });
+
 
         if (eventsError) throw eventsError;
 
@@ -73,20 +81,9 @@ export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorPro
     };
 
     fetchEvents();
-  }, [user, toast]);
+  }, [user, toast, refreshKey]);
 
-  const handleSelectEvent = async (eventId: string) => {
-    // Check if workflow exists for this event (regardless of user)
-    const { data: existingWorkflow } = await supabase
-      .from('workflows')
-      .select('id')
-      .eq('event_id', eventId)
-      .maybeSingle();
-    
-    if (!existingWorkflow && user?.id) {
-      // Create new workflow record for this event with change tracking
-      await updateWorkflowSelections({ event_id: eventId });
-    }
+  const handleSelectEvent = (eventId: string) => {
     onSelectEvent(eventId);
   };
 
@@ -103,8 +100,13 @@ export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorPro
   if (events.length === 0) {
     return (
       <Card>
-        <CardContent className="p-12 text-center">
-          <p className="text-muted-foreground">There are currently no events available. Please create an event or review your workflow dashboard for more details.</p>
+        <CardContent className="p-12 text-center space-y-2">
+          <p className="text-muted-foreground">
+            No events are available for a new workflow. Each event can have only one workflow—events that already have one are hidden here.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Create a new event (or finish an in-progress wizard), then return to this step to attach a workflow.
+          </p>
         </CardContent>
       </Card>
     );
@@ -116,13 +118,20 @@ export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorPro
         <CardHeader>
           <CardTitle>Select an Event</CardTitle>
           <CardDescription>
-            Choose which event you want to set up a workflow for
+            Only events that do not already have a workflow are listed. One workflow per event.
           </CardDescription>
         </CardHeader>
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {events.map((event) => (
+        {events.map((event) => {
+          const lifecycleBadge = getLifecycleTableBadge({
+            status: event.status,
+            start_date: event.start_date,
+            end_date: event.end_date,
+            archived: event.archived,
+          });
+          return (
           <Card
             key={event.id}
             className={`cursor-pointer transition-all hover:shadow-lg ${
@@ -138,6 +147,9 @@ export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorPro
                   <CardTitle className="text-lg">
                     {event.title || "Untitled Event"}
                   </CardTitle>
+                  <Badge variant={lifecycleBadge.variant} className="mt-2 capitalize text-xs">
+                    {lifecycleBadge.label}
+                  </Badge>
                   <CardDescription className="mt-2">
                     {event.description}
                   </CardDescription>
@@ -148,7 +160,8 @@ export function EventSelector({ onSelectEvent, selectedEvent }: EventSelectorPro
               </div>
             </CardHeader>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       {selectedEvent && (

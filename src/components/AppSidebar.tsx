@@ -5,7 +5,6 @@ import {
   Users,
   BarChart3,
   FileText,
-  MessageSquare,
   TrendingUp,
   Plus,
   Bell,
@@ -20,17 +19,18 @@ import {
   ShoppingCart,
   Truck,
   Car,
-  GitPullRequest,
-  CalendarCheck,
-  Users2,
-  BarChart2,
-  ShieldCheck,
-  Store
+  MapPin,
+  Megaphone,
+  MessageSquare,
+  Receipt,
 } from "lucide-react";
-import { usePermissions } from "@/lib/permissions";
-import { useAuth } from "@/hooks/useAuth";
-import { useCollaboratorSections } from "@/hooks/useCollaboratorSections";
 
+import { useAuth } from "@/hooks/useAuth";
+import { useMemo } from "react";
+import { useCreateEventEntryPath } from "@/hooks/useCreateEventEntryPath";
+import { useOwnsActiveEvents } from "@/hooks/useOwnsActiveEvents";
+import { CREATE_EVENT_PATH_NEW_PLANNER } from "@/lib/createEventEntryPath";
+import { cmSidebarFooterText } from "@/lib/cmEnv";
 import {
   Sidebar,
   SidebarContent,
@@ -43,14 +43,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
-// Section keys must match the collaborator_types strings stored in collaborator_configurations.
-// Matching is case-insensitive in getFilteredMenuGroups below.
 const menuGroups = [
   {
     title: "Overview",
     color: "text-blue-600",
     bgColor: "bg-blue-50",
-    alwaysVisible: true, // visible to all roles
     items: [
       {
         title: "Dashboard",
@@ -58,23 +55,28 @@ const menuGroups = [
         icon: Home,
         color: "text-blue-600",
         hoverColor: "hover:bg-blue-50",
-        alwaysVisible: true,
-      }
-    ]
+      },
+      {
+        title: "Marketing campaign",
+        url: "/dashboard/marketing-campaign",
+        icon: Megaphone,
+        color: "text-blue-600",
+        hoverColor: "hover:bg-blue-50",
+        // adminOnly: false,
+      },
+    ],
   },
   {
     title: "Event Planning",
     color: "text-purple-600",
     bgColor: "bg-purple-50",
-    alwaysVisible: false,
     items: [
       {
-        title: "Create Event",
+        title: "Create event",
         url: "/dashboard/create-event",
         icon: Plus,
         color: "text-purple-600",
         hoverColor: "hover:bg-purple-50",
-        alwaysVisible: false,
       },
       {
         title: "Manage Event",
@@ -82,7 +84,6 @@ const menuGroups = [
         icon: Calendar,
         color: "text-purple-600",
         hoverColor: "hover:bg-purple-50",
-        alwaysVisible: false,
       },
       {
         title: "Calendar",
@@ -90,15 +91,13 @@ const menuGroups = [
         icon: CalendarDays,
         color: "text-purple-600",
         hoverColor: "hover:bg-purple-50",
-        alwaysVisible: false,
-      }
-    ]
+      },
+    ],
   },
   {
     title: "Project Tools",
     color: "text-green-600",
     bgColor: "bg-green-50",
-    alwaysVisible: false,
     items: [
       {
         title: "Analytics",
@@ -106,7 +105,6 @@ const menuGroups = [
         icon: BarChart3,
         color: "text-green-600",
         hoverColor: "hover:bg-green-50",
-        alwaysVisible: false,
       },
       {
         title: "Workflow",
@@ -114,7 +112,13 @@ const menuGroups = [
         icon: Workflow,
         color: "text-green-600",
         hoverColor: "hover:bg-green-50",
-        alwaysVisible: false,
+      },
+      {
+        title: "Change Request",
+        url: "/dashboard/project-management?tab=change-request",
+        icon: FileText,
+        color: "text-green-600",
+        hoverColor: "hover:bg-green-50",
       },
       {
         title: "Project Management",
@@ -122,7 +126,6 @@ const menuGroups = [
         icon: CheckSquare,
         color: "text-green-600",
         hoverColor: "hover:bg-green-50",
-        alwaysVisible: true, // collaborators need to see their tasks
       },
       {
         title: "Track Progress",
@@ -130,64 +133,57 @@ const menuGroups = [
         icon: TrendingUp,
         color: "text-green-600",
         hoverColor: "hover:bg-green-50",
-        alwaysVisible: true, // collaborators can track their own tasks
-      }
-    ]
+      },
+      {
+        title: "Event Timeline",
+        url: "/dashboard/task-timeline",
+        icon: BarChart3,
+        color: "text-green-600",
+        hoverColor: "hover:bg-green-50",
+      },
+    ],
   },
   {
-    title: "Change Management",
+    title: "Analytics & Reports",
     color: "text-teal-600",
     bgColor: "bg-teal-50",
-    alwaysVisible: false,
     items: [
       {
-        title: "Change Requests",
-        url: "/dashboard/change-requests",
-        icon: GitPullRequest,
+        title: "Preview Event Plan",
+        url: "/dashboard/preview-event-plan",
+        icon: FileText,
         color: "text-teal-600",
         hoverColor: "hover:bg-teal-50",
-        adminOnly: true, // hidden unless admin or host+coordinator
-        alwaysVisible: false,
+        ownerOnly: true,
       },
       {
-        title: "Timeline Planner",
-        url: "/dashboard/cm-timeline",
-        icon: CalendarCheck,
+        title: "Event Plan Report",
+        url: "/dashboard/reports?tab=event-plan",
+        icon: FileText,
         color: "text-teal-600",
         hoverColor: "hover:bg-teal-50",
-        alwaysVisible: false,
+        ownerOnly: true,
       },
       {
-        title: "Resource Allocation",
-        url: "/dashboard/cm-resources",
-        icon: Users2,
+        title: "Insights",
+        url: "/dashboard/reports?tab=insights",
+        icon: BarChart3,
         color: "text-teal-600",
         hoverColor: "hover:bg-teal-50",
-        alwaysVisible: false,
       },
       {
-        title: "CM Analytics",
-        url: "/dashboard/cm-analytics",
-        icon: BarChart2,
+        title: "Change Request Report",
+        url: "/dashboard/reports?tab=change-requests",
+        icon: FileText,
         color: "text-teal-600",
         hoverColor: "hover:bg-teal-50",
-        alwaysVisible: false,
       },
-      {
-        title: "DB Verification",
-        url: "/dashboard/cm-verification",
-        icon: ShieldCheck,
-        color: "text-teal-600",
-        hoverColor: "hover:bg-teal-50",
-        alwaysVisible: false,
-      }
-    ]
+    ],
   },
   {
     title: "Resources",
     color: "text-orange-600",
     bgColor: "bg-orange-50",
-    alwaysVisible: false,
     items: [
       {
         title: "Planning Assets",
@@ -195,17 +191,6 @@ const menuGroups = [
         icon: Package,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "planning assets",
-      },
-      {
-        title: "Vendors",
-        url: "/dashboard/vendors",
-        icon: Store,
-        color: "text-orange-600",
-        hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "vendors",
       },
       {
         title: "Themes",
@@ -213,8 +198,6 @@ const menuGroups = [
         icon: Palette,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "themes",
       },
       {
         title: "Bookings",
@@ -222,113 +205,83 @@ const menuGroups = [
         icon: Calendar,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "bookings",
       },
       {
-        title: "Venues",
+        title: "Venue Directory",
         url: "/dashboard/venue",
         icon: Building2,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "venues",
       },
       {
-        title: "Hospitality",
+        title: "Hospitality Directory",
         url: "/dashboard/hospitality",
         icon: Coffee,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "hospitality",
       },
       {
-        title: "Rental Service",
+        title: "Service Rental Directory",
         url: "/dashboard/vendor-service",
         icon: ShoppingCart,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "rental service",
       },
       {
-        title: "Vendor Service",
+        title: "Service Vendor Directory",
         url: "/dashboard/service-vendor",
         icon: Truck,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "vendor service",
       },
       {
-        title: "Transportation",
+        title: "Transportation Directory",
         url: "/dashboard/transportation",
         icon: Car,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "transportation",
       },
       {
-        title: "Entertainment",
+        title: "Entertainment Directory",
         url: "/dashboard/entertainment",
         icon: Users,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "entertainment",
       },
       {
-        title: "External Vendor",
+        title: "External Vendor Directory",
         url: "/dashboard/supplier",
         icon: Package,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "external vendor",
       },
       {
-        title: "Marketing",
-        url: "/dashboard/marketing",
-        icon: TrendingUp,
+        title: "Resource map",
+        url: "/dashboard/resource-map",
+        icon: MapPin,
         color: "text-orange-600",
         hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "marketing",
       },
-      {
-        title: "Generate Reports",
-        url: "/dashboard/reports",
-        icon: FileText,
-        color: "text-orange-600",
-        hoverColor: "hover:bg-orange-50",
-        alwaysVisible: false,
-        section: "reports",
-      }
-    ]
+    ],
   },
   {
     title: "Communication",
     color: "text-pink-600",
     bgColor: "bg-pink-50",
-    alwaysVisible: true,
     items: [
       {
-        title: "Team Members",
+        title: "Communication / Team",
         url: "/dashboard/collaborate",
         icon: Users,
         color: "text-pink-600",
         hoverColor: "hover:bg-pink-50",
-        alwaysVisible: true,
       },
       {
-        title: "Comments",
+        title: "Communication Hub",
         url: "/dashboard/comments",
         icon: MessageSquare,
         color: "text-pink-600",
         hoverColor: "hover:bg-pink-50",
-        alwaysVisible: true,
       },
       {
         title: "Notification",
@@ -336,74 +289,103 @@ const menuGroups = [
         icon: Bell,
         color: "text-pink-600",
         hoverColor: "hover:bg-pink-50",
-        alwaysVisible: true,
-      }
-    ]
-  }
+      },
+      {
+        title: "Billing & Invoices",
+        url: "/dashboard/invoices",
+        icon: Receipt,
+        color: "text-pink-600",
+        hoverColor: "hover:bg-pink-50",
+      },
+    ],
+  },
 ];
 
 export function AppSidebar() {
   const { state } = useSidebar();
+  const { userRoles } = useAuth();
+  const createEventUrl = useCreateEventEntryPath();
+  const ownsActiveEvents = useOwnsActiveEvents();
+  const isAdmin = userRoles.includes("admin");
   const location = useLocation();
   const currentPath = location.pathname;
   const collapsed = state === "collapsed";
-  const { isAdmin, isCoordinator, permissionLevel } = usePermissions();
-  const { userRoles } = useAuth();
-  const { assignedSections } = useCollaboratorSections();
+  const cmFooter = cmSidebarFooterText();
 
-  const isActive = (path: string) => currentPath === path;
-
-  const getNavClass = (item: any, isActive: boolean) => {
-    const baseClasses = "transition-all duration-200 rounded-lg mx-2 my-1";
-    if (isActive) {
-      return `${baseClasses} ${item.color} bg-gradient-to-r from-primary/20 to-secondary/20 font-medium border-l-4 border-primary shadow-sm`;
-    }
-    return `${baseClasses} text-muted-foreground ${item.hoverColor} hover:text-foreground hover:shadow-sm hover:scale-[1.02]`;
-  };
-
-  // Check if user has host role with admin or coordinator permission level
-  const hasHostWithAdminOrCoordinator = () => {
-    const hasHostRole = userRoles.includes('host');
-    const hasRequiredPermission = permissionLevel === 'admin' || permissionLevel === 'coordinator';
-    return hasHostRole && hasRequiredPermission;
-  };
+  const resolvedMenuGroups = useMemo(
+    () =>
+      menuGroups.map((g) => ({
+        ...g,
+        items: g.items
+          .filter((item) => {
+            if ("ownerOnly" in item && (item as { ownerOnly?: boolean }).ownerOnly && !ownsActiveEvents) {
+              return false;
+            }
+            // First-time users: "Create event" already opens Themes — hide duplicate Resources → Themes.
+            if (item.title === "Themes" && createEventUrl === CREATE_EVENT_PATH_NEW_PLANNER) {
+              return false;
+            }
+            return true;
+          })
+          .map((item) => {
+            if (item.title !== "Create event") return item;
+            const isNewPlannerEntry = createEventUrl === CREATE_EVENT_PATH_NEW_PLANNER;
+            return {
+              ...item,
+              url: createEventUrl,
+              title: isNewPlannerEntry ? "Browse event themes" : "Create event",
+              isCreateEventEntry: true as const,
+            };
+          }),
+      })),
+    [createEventUrl, ownsActiveEvents],
+  );
 
   /**
-   * Whether a given section key is accessible to the current user.
-   * - null assignedSections = admin = access to all
-   * - string[] = only matching sections (case-insensitive)
+   * Active state: pathname must match. Query rules:
+   * - Reports: tab must match (event-plan treats missing tab as overview).
+   * - Project Management: link without `tab` = Task/Budget (not Collaborator). `tab=collaborator` matches Collaborator workspace.
    */
-  const isSectionAllowed = (section?: string): boolean => {
-    if (!section) return true;              // no section tag = always visible
-    if (assignedSections === null) return true; // admin = unrestricted
-    return assignedSections.some(
-      (s) => s.toLowerCase() === section.toLowerCase()
-    );
+  const pathIsActive = (url: string) => {
+    const [path, query] = url.split("?");
+    const base = currentPath === path || currentPath === `${path}/`;
+    if (!base) return false;
+
+    const have = new URLSearchParams(location.search);
+    const tabHave = have.get("tab");
+
+    if (path === "/dashboard/project-management") {
+      if (query) {
+        const want = new URLSearchParams(query);
+        return tabHave === want.get("tab");
+      }
+      return tabHave !== "collaborator";
+    }
+
+    if (path === "/dashboard/collaborate") {
+      if (!query) {
+        return tabHave === null || tabHave === "team";
+      }
+      const want = new URLSearchParams(query);
+      return tabHave === want.get("tab");
+    }
+
+    if (!query) return true;
+
+    const want = new URLSearchParams(query);
+    const tabW = want.get("tab");
+    if (tabW === "event-plan") {
+      return have.get("tab") === "event-plan" || have.get("tab") === null;
+    }
+    return have.get("tab") === tabW;
   };
 
-  const isCollaborator = permissionLevel === 'coordinator' || permissionLevel === 'viewer';
-
-  const getFilteredMenuGroups = () => {
-    return menuGroups
-      .map((group) => ({
-        ...group,
-        items: group.items.filter((item) => {
-          // Admin-only items (Change Requests)
-          if ((item as any).adminOnly) {
-            return isAdmin() || hasHostWithAdminOrCoordinator();
-          }
-
-          // For collaborators: only show alwaysVisible items + their assigned sections
-          if (isCollaborator) {
-            if ((item as any).alwaysVisible) return true;
-            return isSectionAllowed((item as any).section);
-          }
-
-          // Admins and unauthenticated: show everything
-          return true;
-        }),
-      }))
-      .filter((group) => group.items.length > 0);
+  const getNavClass = (item: { color: string; hoverColor: string }, active: boolean) => {
+    const base = "transition-all duration-200 rounded-md mx-1 my-0.5 px-2 py-2 w-[calc(100%-0.25rem)] min-w-0";
+    if (active) {
+      return `${base} bg-primary text-primary-foreground font-semibold shadow-md border-l-4 border-primary ring-1 ring-primary/20 [&_svg]:text-primary-foreground`;
+    }
+    return `${base} text-muted-foreground ${item.color} ${item.hoverColor} hover:text-foreground hover:shadow-sm`;
   };
 
   return (
@@ -417,42 +399,57 @@ export function AppSidebar() {
             <h2 className="text-lg font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
               Event Management
             </h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              Professional event planning platform
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Professional event planning platform</p>
           </div>
         )}
 
-        {getFilteredMenuGroups().map((group) => (
+        {resolvedMenuGroups.map((group) => (
           <SidebarGroup key={group.title} className="mb-4">
             {!collapsed && (
-              <SidebarGroupLabel className={`text-xs font-semibold ${group.color} uppercase tracking-wider px-4 py-2 ${group.bgColor} rounded-lg mx-2 mb-2`}>
+              <SidebarGroupLabel
+                className={`text-xs font-semibold ${group.color} uppercase tracking-wider px-4 py-2 ${group.bgColor} rounded-lg mx-2 mb-2`}
+              >
                 {group.title}
               </SidebarGroupLabel>
             )}
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items
-                  .map((item) => (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild>
-                        <NavLink
-                          to={item.url}
-                          className={({ isActive }) => getNavClass(item, isActive)}
-                        >
-                          <item.icon className={`h-5 w-5 ${collapsed ? 'mx-auto' : 'mr-3'} transition-colors duration-200`} />
-                          {!collapsed && (
-                            <span className="text-sm font-medium">{item.title}</span>
-                          )}
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
+                  .filter((item) => !(item as { adminOnly?: boolean }).adminOnly || isAdmin)
+                  .map((item) => {
+                    const active = (item as { isCreateEventEntry?: boolean }).isCreateEventEntry
+                      ? createEventUrl === CREATE_EVENT_PATH_NEW_PLANNER
+                        ? currentPath === "/dashboard/themes" || currentPath.startsWith("/dashboard/create-event")
+                        : pathIsActive(item.url)
+                      : pathIsActive(item.url);
+                    const createEntry = (item as { isCreateEventEntry?: boolean }).isCreateEventEntry;
+                    const navTitle =
+                      createEntry && createEventUrl === CREATE_EVENT_PATH_NEW_PLANNER
+                        ? "Pick a theme first, then continue to Create event."
+                        : undefined;
+                    return (
+                      <SidebarMenuItem key={item.title}>
+                        <SidebarMenuButton asChild isActive={active}>
+                          <NavLink to={item.url} end title={navTitle} className={() => getNavClass(item, active)}>
+                            <item.icon
+                              className={`h-5 w-5 shrink-0 ${collapsed ? "mx-auto" : "mr-2"} transition-colors duration-200`}
+                            />
+                            {!collapsed && <span className="truncate text-sm font-medium">{item.title}</span>}
+                          </NavLink>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         ))}
 
+        {!collapsed && cmFooter && (
+          <div className="mt-6 px-4 pt-4 border-t border-border/60">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{cmFooter}</p>
+          </div>
+        )}
         {collapsed && (
           <div className="mt-auto px-2">
             <div className="h-8 w-8 rounded-full bg-gradient-to-r from-primary to-secondary mx-auto" />

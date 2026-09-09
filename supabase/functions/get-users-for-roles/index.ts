@@ -12,92 +12,67 @@ serve(async (req) => {
   }
 
   try {
-    // Optional: Verify JWT if provided (for logging/auditing)
-    const authHeader = req.headers.get('Authorization');
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '');
-      const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-      const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-      const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
-      if (authError) {
-        console.warn('JWT verification failed, but continuing with service role:', authError.message);
-      } else {
-        console.log('Authenticated user:', user?.id);
-      }
-    }
-
-    // Use service role for admin operations
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
+      { auth: { autoRefreshToken: false, persistSession: false } },
     );
 
-    // Get all profiles first (only users with profiles should be returned)
-    const { data: profiles, error: profilesError } = await supabaseAdmin
-      .from('profiles')
-      .select('user_id, display_name, created_at')
-      .order('created_at', { ascending: false });
-    
-    if (profilesError) throw profilesError;
-
-    if (!profiles || profiles.length === 0) {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
       return new Response(
-        JSON.stringify({ users: [] }),
-        { 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 
-        }
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
-    // Get unique user IDs from profiles
-    const uniqueUserIds = [...new Set(profiles.map(p => p.user_id))];
+    const token = authHeader.replace('Bearer ', '');
+    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
+    if (userError || !userData?.user) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
-    // Get auth users only for those with profiles
+    const { data: isAdmin } = await supabaseAdmin.rpc('policy_has_permission_level', {
+      _user_id: userData.user.id,
+      _level: 'admin',
+    });
+    if (!isAdmin) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden: admin role required' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
     const { data: { users }, error: authError } = await supabaseAdmin.auth.admin.listUsers();
     if (authError) throw authError;
 
-    // Combine user data - only include users that have profiles
-    const usersWithData = profiles
-      .filter((profile: any) => uniqueUserIds.includes(profile.user_id)) // Ensure uniqueness
-      .map((profile: any) => {
-        const authUser = users.find((u: any) => u.id === profile.user_id);
-        return {
-          id: profile.user_id,
-          name: profile.display_name || 'Unknown User',
-          email: authUser?.email || '',
-          avatar: authUser?.user_metadata?.avatar_url,
-          created_at: profile.created_at
-        };
-      })
-      // Remove duplicates by user_id
-      .filter((user: any, index: number, self: any[]) => 
-        index === self.findIndex((u: any) => u.id === user.id)
-      );
+    const { data: profiles, error: profilesError } = await supabaseAdmin
+      .from('profiles')
+      .select('user_id, display_name, created_at');
+    if (profilesError) throw profilesError;
+
+    const usersWithData = profiles?.map((profile: any) => {
+      const authUser = users.find((u: any) => u.id === profile.user_id);
+      return {
+        id: profile.user_id,
+        name: profile.display_name || 'Unknown User',
+        email: authUser?.email || '',
+        avatar: authUser?.user_metadata?.avatar_url,
+        created_at: profile.created_at,
+      };
+    }) || [];
 
     return new Response(
       JSON.stringify({ users: usersWithData }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
     );
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Error:', error);
+  } catch (error: any) {
     return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400 
-      }
+      JSON.stringify({ error: error?.message ?? 'Unknown error' }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
     );
   }
 });

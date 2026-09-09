@@ -1,0 +1,28 @@
+# Deliverable 2 / SOW: daily summary emails via Resend (template: daily_planner_summary).
+# Replace env values below.
+# Edge env: RESEND_API_KEY, EMAIL_FROM, SUPABASE_SERVICE_ROLE_KEY. Optional: DAILY_SUMMARY_EMAILS_ENABLED=false to disable sends.
+
+name: Daily marketing summary (Resend)
+
+on:
+  schedule:
+    - cron: "30 13 * * *"
+  workflow_dispatch:
+
+jobs:
+  invoke:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: "https://mavbnybtyfewfsihmuri.supabase.co"
+      SUPABASE_ANON_KEY: "sb_publishable_dB_z1XDmVoMJDMDpNPnpgg_ITdi4C3d"
+      CRON_SECRET: ""
+    steps:
+      - name: POST daily_summary_batch
+        run: |
+          set -e
+          curl -sS -X POST "${SUPABASE_URL}/functions/v1/send-event-notification" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            -d '{"kind":"daily_summary_batch"}'

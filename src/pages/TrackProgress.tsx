@@ -11,6 +11,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useEventFilter } from "@/hooks/useEventFilter";
+import { computeEventLifecycle } from "@/lib/eventStatus";
+import { format } from "date-fns";
+import { Label } from "@/components/ui/label";
+import { plannerToolsCopy } from "@/lib/nudges";
 import { 
   TrendingUp, 
   Calendar as CalendarIcon, 
@@ -57,8 +61,26 @@ interface ProjectStats {
 
 export default function TrackProgress() {
   const { toast } = useToast();
-  const { selectedEventFilter, events, eventsLoading } = useEventFilter();
-  
+  const { selectedEventFilter, setSelectedEventFilter, events: allEvents, eventsLoading } = useEventFilter();
+  const activeEvents = allEvents.filter((e) => computeEventLifecycle(e)?.isActiveEvent);
+
+  // Default to most recent active event once events load.
+  useEffect(() => {
+    if (eventsLoading) return;
+    if (activeEvents.length === 0) return;
+    const stillValid =
+      selectedEventFilter !== "all" && activeEvents.some((e) => e.id === selectedEventFilter);
+    if (!stillValid) {
+      setSelectedEventFilter(activeEvents[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventsLoading, activeEvents.length]);
+
+  const selectValue =
+    selectedEventFilter !== "all" && activeEvents.some((e) => e.id === selectedEventFilter)
+      ? selectedEventFilter
+      : "";
+
   const [selectedFilter, setSelectedFilter] = useState("all");
   const [tasks, setTasks] = useState<Task[]>([]);
   
@@ -92,16 +114,14 @@ export default function TrackProgress() {
       
       if (error) throw error;
 
-      // Fetch assigned users for each task
       const tasksWithUsers = await Promise.all(
         (tasksData || []).map(async (task) => {
-          // Get assigned user from task's assigned_to field
-          let assigned_user_name: string | null = null;
-          const assigned_user_id = (task as any).assigned_to || null;
-          
-          if (assigned_user_id) {
+          let assigned_user_name: string | null = task.assigned_to_display_name || null;
+          const assigned_user_id = task.assigned_to || null;
+
+          if (assigned_user_id && !assigned_user_name) {
             const { data: profileData } = await supabase
-              .from('profiles')
+              .from('user_profiles_teammate_view')
               .select('display_name')
               .eq('user_id', assigned_user_id)
               .maybeSingle();
@@ -121,7 +141,7 @@ export default function TrackProgress() {
       console.error('Error fetching tasks:', error);
       toast({
         title: "Error",
-        description: "Failed to fetch tasks",
+        description: plannerToolsCopy.trackProgressLoadFailed,
         variant: "destructive",
       });
     } finally {
@@ -350,7 +370,50 @@ export default function TrackProgress() {
         </div>
       </div>
 
-      {/* Overview Stats */}
+      {/* Event selector */}
+      <Card>
+        <CardContent className="p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Label htmlFor="track-event" className="text-sm font-medium whitespace-nowrap">
+              Track event:
+            </Label>
+            <Select
+              value={selectValue}
+              onValueChange={(v) => setSelectedEventFilter(v)}
+              disabled={eventsLoading || activeEvents.length === 0}
+            >
+              <SelectTrigger id="track-event" className="w-full sm:w-80">
+                <SelectValue
+                  placeholder={
+                    eventsLoading
+                      ? "Loading events…"
+                      : activeEvents.length === 0
+                        ? "No active events"
+                        : "Select an active event"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {activeEvents.map((event) => (
+                  <SelectItem key={event.id} value={event.id}>
+                    {event.title}
+                    {event.start_date && ` (${format(new Date(event.start_date), "MMM d, yyyy")})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {!eventsLoading && activeEvents.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No active events to track. Create or activate an event to see progress metrics.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {!eventsLoading && activeEvents.length === 0 ? null : (
+        <>
+
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -359,7 +422,7 @@ export default function TrackProgress() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{projectStats.totalTasks}</div>
-            <Progress value={(projectStats.completedTasks / projectStats.totalTasks) * 100} className="mt-2" />
+            <Progress value={projectStats.totalTasks > 0 ? (projectStats.completedTasks / projectStats.totalTasks) * 100 : 0} className="mt-2" />
             <p className="text-xs text-muted-foreground mt-1">
               {projectStats.completedTasks} completed
             </p>
@@ -387,7 +450,7 @@ export default function TrackProgress() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{projectStats.completedHours}h</div>
-            <Progress value={(projectStats.completedHours / projectStats.totalHours) * 100} className="mt-2" />
+            <Progress value={projectStats.totalHours > 0 ? (projectStats.completedHours / projectStats.totalHours) * 100 : 0} className="mt-2" />
             <p className="text-xs text-muted-foreground mt-1">
               of {projectStats.totalHours}h estimated
             </p>
@@ -593,6 +656,8 @@ export default function TrackProgress() {
           </div>
         </TabsContent>
       </Tabs>
+        </>
+      )}
     </div>
   );
 }

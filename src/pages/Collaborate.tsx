@@ -1,33 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AvatarWithBrandFallback } from "@/components/AvatarWithBrandFallback";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import {
-  Users,
-  MessageSquare,
-  FileText,
-  Plus,
-  Send,
-  UserPlus,
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  FileIcon,
-  Download,
-  Upload
-} from "lucide-react";
+import { Users, UserPlus, Clock, AlertCircle, FileIcon, Upload, CheckCircle, MessageSquare } from "lucide-react";
 import { TeamMemberCard } from "@/components/TeamMemberCard";
 import { NoTeamMembersCard } from "@/components/NoTeamMembersCard";
+import { RoleManager } from "@/components/RoleManager";
+import { useEventFilter } from "@/hooks/useEventFilter";
 
 export interface TeamMember {
   id: string;
@@ -38,25 +26,8 @@ export interface TeamMember {
   status: 'online' | 'offline' | 'busy' | 'invited' | 'configured';
   joinedAt: string;
   collaboratorTypes?: string[];
+  availability?: 'assigned' | 'unassigned';
   isConfiguration?: boolean;
-}
-
-interface Message {
-  id: string;
-  content: string;
-  sender: string;
-  senderName: string;
-  timestamp: string;
-  type: 'text' | 'file' | 'system';
-}
-
-interface SharedFile {
-  id: string;
-  name: string;
-  size: string;
-  uploadedBy: string;
-  uploadedAt: string;
-  url: string;
 }
 
 interface Activity {
@@ -67,15 +38,49 @@ interface Activity {
   type: 'task' | 'comment' | 'file' | 'member';
 }
 
+/** Stored values must stay stable for existing tasks/config; labels follow client markup naming. */
+const COLLABORATOR_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Bookings', label: 'Bookings' },
+  { value: 'Venue', label: 'Venue' },
+  { value: 'Vendor Service Rental/Buy', label: 'Vendor Service Rental/Buy' },
+  { value: 'Hospitality', label: 'Hospitality' },
+  { value: 'Service Vendor', label: 'Service Vendor' },
+  { value: 'Transportation', label: 'Transportation' },
+  { value: 'Entertainment', label: 'Entertainment' },
+  { value: 'Suppliers', label: 'External Vendor' },
+  { value: 'Vendors', label: 'Vendors' },
+  { value: 'Marketing', label: 'Marketing' },
+];
+
+type CollaborateTab = "team" | "activity";
+
 export default function Collaborate() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState("team");
+  const [activeTab, setActiveTab] = useState<CollaborateTab>(() => {
+    const t = searchParams.get("tab");
+    if (t === "activity") return t;
+    return "team";
+  });
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t === "activity") setActiveTab(t);
+    else setActiveTab("team");
+  }, [searchParams]);
+
+  const handleCollaborateTabChange = (v: string) => {
+    const next = v as CollaborateTab;
+    setActiveTab(next);
+    if (next === "team") {
+      setSearchParams({}, { replace: true });
+    } else {
+      setSearchParams({ tab: next }, { replace: true });
+    }
+  };
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -90,21 +95,38 @@ export default function Collaborate() {
   const [userTeam, setUserTeam] = useState<{ id: string; name: string } | null>(null);
   const [userTeams, setUserTeams] = useState<{ id: string; name: string; members: TeamMember[]; isAdmin: boolean }[]>([]);
   const [eventParticipants, setEventParticipants] = useState<{ email: string; name: string }[]>([]);
-  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null);
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false);
+
+  const inviteTeamId = activeTeamId ?? userTeam?.id ?? null;
+  const isInviteTeamAdmin = useMemo(() => {
+    if (!inviteTeamId) return false;
+    return userTeams.some((t) => t.id === inviteTeamId && t.isAdmin);
+  }, [inviteTeamId, userTeams]);
+
+  useEffect(() => {
+    if (inviteRole === "admin" && !isInviteTeamAdmin) {
+      setInviteRole("");
+    }
+  }, [inviteRole, isInviteTeamAdmin]);
+
+  const openInviteDialog = (teamId?: string | null) => {
+    setActiveTeamId(teamId ?? userTeam?.id ?? null);
+    setIsInviteDialogOpen(true);
+  };
 
   // Fetch event participants for invitation dropdown
   useEffect(() => {
     const fetchEventParticipants = async () => {
       if (!user) return;
-
+      
       try {
         const { data, error } = await supabase
           .from('Create Event')
           .select('event_collaborators')
           .eq('userid', user.id);
-
+        
         if (!error && data) {
           const participants: { email: string; name: string }[] = [];
           data.forEach((event) => {
@@ -125,7 +147,7 @@ export default function Collaborate() {
         console.error('Error fetching event participants:', error);
       }
     };
-
+    
     fetchEventParticipants();
   }, [user]);
 
@@ -166,7 +188,7 @@ export default function Collaborate() {
         // Get team members from team_assignments table
         const { data: assignments, error: assignmentsError } = await supabase
           .from('team_assignments')
-          .select('user_id, team_admin, is_coordinator, is_viewer')
+          .select('user_id, team_admin, is_collaborator, is_viewer')
           .eq('team_id', userTeam.id);
 
         if (assignmentsError) {
@@ -179,40 +201,27 @@ export default function Collaborate() {
           return;
         }
 
-        // Get user details from profiles table
+        // Teammate-safe profile fields (name, role) via view — not public."User Profile"
         const userIds = assignments.map(a => a.user_id);
         const { data: usersData, error: usersError } = await supabase
-          .from('profiles')
-          .select('user_id, display_name, avatar_url')
+          .from('user_profiles_teammate_view')
+          .select('user_id, display_name, avatar_url, role')
           .in('user_id', userIds);
 
         if (usersError) {
           console.error('Error fetching user details:', usersError);
         }
 
-        // Get roles from user_roles table
-        const { data: userRolesData, error: rolesError } = await supabase
-          .from('user_roles')
-          .select('user_id, role')
-          .in('user_id', userIds);
-
-        if (rolesError) {
-          console.error('Error fetching user roles:', rolesError);
-        }
-
-        // Create maps for quick lookup
         const usersMap = new Map(usersData?.map(u => [u.user_id, u]) || []);
-        const rolesMap = new Map(userRolesData?.map(r => [r.user_id, r.role]) || []);
 
         // Combine data
         const members: TeamMember[] = assignments.map(assignment => {
           const userDetails = usersMap.get(assignment.user_id);
-          const role = rolesMap.get(assignment.user_id);
-
-          let roleDisplay = role || 'Member';
+          
+          let roleDisplay = userDetails?.role || 'Member';
           if (assignment.team_admin) {
             roleDisplay = 'Admin';
-          } else if (assignment.is_coordinator) {
+          } else if (assignment.is_collaborator) {
             roleDisplay = 'Coordinator';
           } else if (assignment.is_viewer) {
             roleDisplay = 'Viewer';
@@ -224,6 +233,7 @@ export default function Collaborate() {
             role: roleDisplay,
             status: assignment.user_id === user?.id ? 'online' as const : 'offline' as const,
             joinedAt: new Date().toISOString(),
+            availability: 'assigned',
             isConfiguration: false,
             avatar: userDetails?.avatar_url || ''
           };
@@ -245,9 +255,10 @@ export default function Collaborate() {
             status: 'configured' as const,
             joinedAt: config.created_at,
             collaboratorTypes: config.collaborator_types,
+            availability: 'unassigned',
             isConfiguration: true
           }));
-
+          
           setTeamMembers([...members, ...configMembers]);
         } else {
           setTeamMembers(members);
@@ -292,7 +303,7 @@ export default function Collaborate() {
           // Get user details for all assignments
           const userIds = allAssignments.map(a => a.user_id);
           const { data: usersData } = await supabase
-            .from('profiles')
+            .from('user_profiles_teammate_view')
             .select('user_id, display_name')
             .in('user_id', userIds);
 
@@ -331,7 +342,7 @@ export default function Collaborate() {
         }
 
         // Sort all activities by timestamp
-        activitiesData.sort((a, b) =>
+        activitiesData.sort((a, b) => 
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
         );
 
@@ -350,28 +361,28 @@ export default function Collaborate() {
       if (!user) return;
       try {
         console.log('Fetching teams for user:', user.id);
-
+        
         // Get all team assignments for the user
         const { data: assignments, error: assignmentsError } = await supabase
           .from('team_assignments')
           .select('team_id, team_admin, teams(id, name)')
           .eq('user_id', user.id);
-
+        
         if (assignmentsError || !assignments) {
           console.error('Error fetching assignments:', assignmentsError);
           return;
         }
-
+        
         console.log('User assignments:', assignments);
-
+        
         // For each team, fetch its members
         const teamsWithMembers = await Promise.all(assignments.map(async (assignment: any) => {
           const teamId = assignment.team_id;
           const teamName = assignment.teams?.name || 'Unnamed Team';
           const isAdmin = !!assignment.team_admin;
-
+          
           console.log(`Fetching members for team ${teamName} (${teamId})`);
-
+          
           // Get all members for this team (excluding current user)
           const { data: memberAssignments } = await supabase
             .from('team_assignments')
@@ -384,14 +395,14 @@ export default function Collaborate() {
           let usersMap: Record<string, { id: string; name: string; email: string; avatar_url?: string }> = {};
           if (userIds.length > 0) {
             const { data: profilesData } = await supabase
-              .from('profiles')
+              .from('user_profiles_teammate_view')
               .select('user_id, display_name, avatar_url')
               .in('user_id', userIds);
 
             if (profilesData) {
               usersMap = profilesData.reduce((acc: any, u: any) => {
-                acc[u.user_id] = {
-                  id: u.user_id,
+                acc[u.user_id] = { 
+                  id: u.user_id, 
                   name: u.display_name || 'Unknown User',
                   email: '',
                   avatar_url: u.avatar_url
@@ -410,6 +421,7 @@ export default function Collaborate() {
               role: ma.team_admin ? 'Admin' : 'Member',
               status: 'offline',
               joinedAt: new Date().toISOString(),
+              availability: 'assigned',
               avatar: userInfo?.avatar_url || ''
             };
           });
@@ -433,6 +445,7 @@ export default function Collaborate() {
               status: 'configured' as const,
               joinedAt: config.created_at,
               collaboratorTypes: config.collaborator_types,
+              availability: 'unassigned',
               isConfiguration: true
             }));
             members.push(...configMembers);
@@ -441,7 +454,7 @@ export default function Collaborate() {
 
           return { id: teamId, name: teamName, members, isAdmin };
         }));
-
+        
         console.log('Final teams with members:', teamsWithMembers);
         setUserTeams(teamsWithMembers);
       } catch (error) {
@@ -451,32 +464,20 @@ export default function Collaborate() {
     fetchUserTeams();
   }, [user, refreshTrigger]);
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !user) return;
-
-    const message: Message = {
-      id: Date.now().toString(),
-      content: newMessage,
-      sender: user.id,
-      senderName: user.email || "Current User",
-      timestamp: new Date().toISOString(),
-      type: "text"
-    };
-
-    setMessages(prev => [...prev, message]);
-    setNewMessage("");
-
-    toast({
-      title: "Message sent",
-      description: "Your message has been sent to the team.",
-    });
-  };
-
   const handleInviteMember = async () => {
     if (!inviteRole || selectedCollaboratorTypes.length === 0) {
       toast({
         title: "Error",
-        description: "Please select a role and at least one collaborator type.",
+        description: "Please select a role and at least one team role type.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (inviteRole === "admin" && !isInviteTeamAdmin) {
+      toast({
+        title: "Not allowed",
+        description: "Only team admins can assign the Admin role.",
         variant: "destructive"
       });
       return;
@@ -484,25 +485,23 @@ export default function Collaborate() {
 
     // If no email provided, save as a collaborator configuration
     if (!inviteEmail || !inviteEmail.trim()) {
-      if (!activeTeamId) {
+      if (!inviteTeamId) {
         toast({
-          title: "Error",
-          description: "No team selected. Please try again.",
+          title: "No team yet",
+          description: "Create a team first, or enter an email address to send an invitation.",
           variant: "destructive"
         });
         return;
       }
 
       try {
-        console.log('Creating config for team:', activeTeamId, 'role:', inviteRole);
-
         const { data, error } = await supabase
           .from('collaborator_configurations')
           .insert({
-            team_id: activeTeamId,
+            team_id: inviteTeamId,
             role: inviteRole,
             collaborator_types: selectedCollaboratorTypes,
-            is_coordinator: inviteAttributes.coordinator,
+            is_collaborator: inviteAttributes.coordinator,
             is_viewer: inviteAttributes.viewer,
           })
           .select();
@@ -511,29 +510,29 @@ export default function Collaborate() {
           console.error('Error creating config:', error);
           throw error;
         }
-
+        
         console.log('Config created:', data);
 
         toast({
           title: "Success",
           description: `${inviteRole} role configured. You can now assign tasks to this role.`,
           action: (
-            <Button
-              variant="outline"
-              size="sm"
+            <Button 
+              variant="outline" 
+              size="sm" 
               onClick={() => window.location.href = '/dashboard/project-management'}
             >
               Go to Tasks
             </Button>
           ),
         });
-
+        
         setIsInviteDialogOpen(false);
         setInviteEmail("");
         setInviteRole("");
         setInviteAttributes({ coordinator: false, viewer: false });
         setSelectedCollaboratorTypes([]);
-
+        
         // Trigger refresh of team data
         setRefreshTrigger(prev => prev + 1);
         return;
@@ -541,7 +540,7 @@ export default function Collaborate() {
         console.error('Error saving collaborator configuration:', error);
         toast({
           title: "Error",
-          description: "Failed to save collaborator configuration. Please try again.",
+          description: "Failed to save team role configuration. Please try again.",
           variant: "destructive"
         });
         return;
@@ -555,7 +554,7 @@ export default function Collaborate() {
           role: inviteRole,
           inviterName: user?.email?.split('@')[0] || 'Team Admin',
           inviterEmail: user?.email || 'admin@example.com',
-          teamId: userTeam?.id,
+          teamId: inviteTeamId ?? undefined,
           isCoordinator: inviteAttributes.coordinator,
           isViewer: inviteAttributes.viewer,
           collaboratorTypes: selectedCollaboratorTypes,
@@ -564,7 +563,7 @@ export default function Collaborate() {
 
       if (error) {
         console.error('Error sending invitation:', error);
-
+        
         // Check if it's the "user already exists" error
         const errorMessage = error.message || '';
         if (errorMessage.includes('already been registered') || errorMessage.includes('email_exists')) {
@@ -603,16 +602,16 @@ export default function Collaborate() {
       }
 
       const isExistingUser = data?.isExistingUser;
-
+      
       toast({
         title: isExistingUser ? "Team Member Added" : "Invitation Sent",
-        description: isExistingUser
+        description: isExistingUser 
           ? `${inviteEmail} has been added to your team. You can now assign tasks to them.`
           : `Invitation sent to ${inviteEmail} as ${inviteRole}. They will be available for task assignment once they join.`,
         action: (
-          <Button
-            variant="outline"
-            size="sm"
+          <Button 
+            variant="outline" 
+            size="sm" 
             onClick={() => window.location.href = '/dashboard/project-management'}
           >
             Go to Tasks
@@ -625,14 +624,14 @@ export default function Collaborate() {
       setInviteAttributes({ coordinator: false, viewer: false });
       setSelectedCollaboratorTypes([]);
       setIsInviteDialogOpen(false);
-
+      
       // Refresh team members list with updated roles
       const { data: refreshData, error: refreshError } = await supabase.functions.invoke('get-invited-users', {
         headers: {
           Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`
         }
       });
-
+      
       if (refreshData?.success) {
         // Get updated roles from database
         const { data: userRolesData, error: rolesError } = await supabase
@@ -691,7 +690,11 @@ export default function Collaborate() {
     setIsMemberDialogOpen(true);
   };
 
+  const createTeamReady =
+    Boolean(teamName.trim()) && teamCollaboratorTypes.length > 0 && Boolean(user);
+
   const handleCreateTeam = async () => {
+    if (isCreatingTeam) return;
     if (!teamName.trim()) {
       toast({
         title: "Error",
@@ -704,7 +707,7 @@ export default function Collaborate() {
     if (teamCollaboratorTypes.length === 0) {
       toast({
         title: "Error",
-        description: "Please select at least one collaborator type.",
+        description: "Please select at least one team role type.",
         variant: "destructive"
       });
       return;
@@ -719,6 +722,7 @@ export default function Collaborate() {
       return;
     }
 
+    setIsCreatingTeam(true);
     try {
       // Create the team
       const { data: teamData, error: teamError } = await supabase
@@ -760,13 +764,13 @@ export default function Collaborate() {
 
       toast({
         title: "Success",
-        description: `Team "${teamName}" created with ${teamCollaboratorTypes.join(', ')} collaborators!`,
+        description: `Team "${teamName}" created with role types: ${teamCollaboratorTypes.join(", ")}.`,
       });
 
       setTeamName("");
       setTeamCollaboratorTypes([]);
       setIsCreateTeamDialogOpen(false);
-
+      
       // Update userTeam state
       setUserTeam({ id: teamData.id, name: teamData.name });
     } catch (error) {
@@ -776,29 +780,51 @@ export default function Collaborate() {
         description: "An unexpected error occurred. Please try again.",
         variant: "destructive"
       });
+    } finally {
+      setIsCreatingTeam(false);
     }
   };
 
+  // RoleManager gates "Add task assignment" on a concrete event. Without a picker here the button
+  // stayed permanently disabled, which acceptance testing reported as missing task assignment (role).
+  const { selectedEventFilter, setSelectedEventFilter, events, eventsLoading } = useEventFilter();
+
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-            Team Collaboration
+            Communication / Team
           </h1>
           <p className="text-muted-foreground">
-            Work together seamlessly on your events
+            Invite team members, manage permission levels, assign roles, and navigate to Themes to create an event
           </p>
+        </div>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button type="button" onClick={() => openInviteDialog()}>
+            <UserPlus className="w-4 h-4 mr-2" />
+            Invite &amp; permission levels
+          </Button>
+          <Button type="button" variant="outline" asChild>
+            <Link to="/dashboard/themes">Browse Themes / Create Event</Link>
+          </Button>
+          <Button type="button" variant="outline" asChild>
+            <Link to="/dashboard/manage-event">Manage Event</Link>
+          </Button>
+          <Button type="button" variant="outline" asChild>
+            <Link to="/dashboard/project-management">Project Management</Link>
+          </Button>
         </div>
 
         {/* Create Team Dialog */}
-        <Dialog
-          open={isCreateTeamDialogOpen}
+        <Dialog 
+          open={isCreateTeamDialogOpen} 
           onOpenChange={(open) => {
             setIsCreateTeamDialogOpen(open);
             if (!open) {
               setTeamName("");
               setTeamCollaboratorTypes([]);
+              setIsCreatingTeam(false);
             }
           }}
         >
@@ -816,29 +842,34 @@ export default function Collaborate() {
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Collaborator Types (select all that apply)</label>
+                <label className="text-sm font-medium">Team role types (select all that apply)</label>
                 <div className="mt-2 max-h-48 overflow-y-auto space-y-2 border rounded-md p-3 bg-background">
-                  {['Bookings', 'Venue', 'Vendor Service Rental/Buy', 'Hospitality', 'Service Vendor', 'Transportation', 'Entertainment', 'External Vendors'].map((type) => (
-                    <label key={type} className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 p-2 rounded">
+                  {COLLABORATOR_TYPE_OPTIONS.map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 p-2 rounded">
                       <input
                         type="checkbox"
-                        checked={teamCollaboratorTypes.includes(type)}
+                        checked={teamCollaboratorTypes.includes(value)}
                         onChange={(e) => {
                           if (e.target.checked) {
-                            setTeamCollaboratorTypes([...teamCollaboratorTypes, type]);
+                            setTeamCollaboratorTypes([...teamCollaboratorTypes, value]);
                           } else {
-                            setTeamCollaboratorTypes(teamCollaboratorTypes.filter(t => t !== type));
+                            setTeamCollaboratorTypes(teamCollaboratorTypes.filter(t => t !== value));
                           }
                         }}
                         className="w-4 h-4"
                       />
-                      <span className="text-sm">{type}</span>
+                      <span className="text-sm">{label}</span>
                     </label>
                   ))}
                 </div>
               </div>
-              <Button onClick={handleCreateTeam} className="w-full">
-                Create Team
+              <Button
+                type="button"
+                disabled={!createTeamReady || isCreatingTeam}
+                onClick={handleCreateTeam}
+                className="w-full"
+              >
+                {isCreatingTeam ? "Creating Team…" : "Create Team"}
               </Button>
             </div>
           </DialogContent>
@@ -854,15 +885,13 @@ export default function Collaborate() {
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
                   <div className="relative">
-                    <Avatar className="w-16 h-16">
-                      {selectedMember.avatar ? (
-                        <AvatarImage src={selectedMember.avatar} alt={selectedMember.name} />
-                      ) : (
-                        <AvatarFallback className="text-lg">
-                          {selectedMember.name.split(' ').map(n => n[0]).join('')}
-                        </AvatarFallback>
-                      )}
-                    </Avatar>
+                    <AvatarWithBrandFallback
+                      className="w-16 h-16"
+                      src={selectedMember.avatar}
+                      alt={selectedMember.name}
+                      displayName={selectedMember.name}
+                      fallbackClassName="text-xl"
+                    />
                     <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${getStatusColor(selectedMember.status)}`} />
                   </div>
                   <div className="flex-1">
@@ -870,7 +899,7 @@ export default function Collaborate() {
                     <p className="text-muted-foreground break-all">{selectedMember.email}</p>
                   </div>
                 </div>
-
+                
                 <div className="space-y-3">
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Role</label>
@@ -878,7 +907,7 @@ export default function Collaborate() {
                       <Badge variant="secondary" className="text-sm">{selectedMember.role.replace('_', ' ')}</Badge>
                     </div>
                   </div>
-
+                  
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Status</label>
                     <div className="flex items-center gap-2 mt-1">
@@ -886,7 +915,7 @@ export default function Collaborate() {
                       <span className="capitalize text-sm">{selectedMember.status}</span>
                     </div>
                   </div>
-
+                  
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Joined Date</label>
                     <p className="text-sm mt-1">
@@ -904,8 +933,8 @@ export default function Collaborate() {
         </Dialog>
 
         {/* Invite Member Dialog */}
-        <Dialog
-          open={isInviteDialogOpen}
+        <Dialog 
+          open={isInviteDialogOpen} 
           onOpenChange={(open) => {
             setIsInviteDialogOpen(open);
             if (!open) {
@@ -921,6 +950,24 @@ export default function Collaborate() {
               <DialogTitle>Invite Team Member</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
+              {!inviteTeamId && (
+                <div className="rounded-md border border-amber-300/70 bg-amber-50 p-3 text-sm dark:bg-amber-950/20">
+                  <p className="mb-2">
+                    You need a team before you can save a permission level without an email address.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setIsInviteDialogOpen(false);
+                      setIsCreateTeamDialogOpen(true);
+                    }}
+                  >
+                    Create a team first
+                  </Button>
+                </div>
+              )}
               <div>
                 <label className="text-sm font-medium">Email Address (Optional)</label>
                 <Input
@@ -930,7 +977,7 @@ export default function Collaborate() {
                   onChange={(e) => setInviteEmail(e.target.value)}
                 />
               </div>
-
+              
               <div>
                 <label className="text-sm font-medium">Role</label>
                 <Select value={inviteRole} onValueChange={setInviteRole}>
@@ -938,7 +985,9 @@ export default function Collaborate() {
                     <SelectValue placeholder="Select role" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
+                    {isInviteTeamAdmin && (
+                      <SelectItem value="admin">Admin</SelectItem>
+                    )}
                     <SelectItem value="organizer">Organizer</SelectItem>
                     <SelectItem value="coordinator">Coordinator</SelectItem>
                     <SelectItem value="vendor">Vendor</SelectItem>
@@ -946,30 +995,30 @@ export default function Collaborate() {
                   </SelectContent>
                 </Select>
               </div>
-
+              
               <div>
-                <label className="text-sm font-medium">Collaborator Types (select all that apply)</label>
+                <label className="text-sm font-medium">Team role types (select all that apply)</label>
                 <div className="mt-2 max-h-48 overflow-y-auto space-y-2 border rounded-md p-3 bg-background">
-                  {['Bookings', 'Venue', 'Vendor Service Rental/Buy', 'Hospitality', 'Service Vendor', 'Transportation', 'Entertainment', 'External Vendors'].map((type) => (
-                    <label key={type} className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 p-2 rounded">
+                  {COLLABORATOR_TYPE_OPTIONS.map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 p-2 rounded">
                       <input
                         type="checkbox"
-                        checked={selectedCollaboratorTypes.includes(type)}
+                        checked={selectedCollaboratorTypes.includes(value)}
                         onChange={(e) => {
                           if (e.target.checked) {
-                            setSelectedCollaboratorTypes([...selectedCollaboratorTypes, type]);
+                            setSelectedCollaboratorTypes([...selectedCollaboratorTypes, value]);
                           } else {
-                            setSelectedCollaboratorTypes(selectedCollaboratorTypes.filter(t => t !== type));
+                            setSelectedCollaboratorTypes(selectedCollaboratorTypes.filter(t => t !== value));
                           }
                         }}
                         className="w-4 h-4"
                       />
-                      <span className="text-sm">{type}</span>
+                      <span className="text-sm">{label}</span>
                     </label>
                   ))}
                 </div>
               </div>
-
+              
               <Button onClick={handleInviteMember} className="w-full">
                 Send Invitation
               </Button>
@@ -978,7 +1027,43 @@ export default function Collaborate() {
         </Dialog>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Invite, permission levels &amp; task assignment (role)</CardTitle>
+          <CardDescription>
+            Role management and permission levels for the selected event. Task assignments are created in Project
+            Management → Task and appear for collaborators automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="max-w-md space-y-2">
+            <label className="text-sm font-medium" htmlFor="collaborate-event">
+              Event for task assignment
+            </label>
+            <Select value={selectedEventFilter} onValueChange={setSelectedEventFilter}>
+              <SelectTrigger id="collaborate-event">
+                <SelectValue placeholder={eventsLoading ? "Loading events…" : "All events"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All events</SelectItem>
+                {events.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {events.length === 0 && !eventsLoading
+                ? "No events yet — create one from Browse Themes / Create Event, then assign tasks by role."
+                : "Pick a single event to enable “Add task assignment” below."}
+            </p>
+          </div>
+          <RoleManager selectedEventFilter={selectedEventFilter} />
+        </CardContent>
+      </Card>
+
+      <Tabs value={activeTab} onValueChange={handleCollaborateTabChange} className="space-y-6">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="team" className="flex items-center gap-2">
             <Users className="w-4 h-4" />
@@ -991,6 +1076,33 @@ export default function Collaborate() {
         </TabsList>
 
         <TabsContent value="team" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Team directory</CardTitle>
+              <CardDescription>
+                Team is a roster view: member name, availability status (assigned or unassigned), and collaborator type.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Members</p>
+                <p className="text-xl font-semibold">{teamMembers.filter((m) => !m.isConfiguration).length}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Assigned</p>
+                <p className="text-xl font-semibold">
+                  {teamMembers.filter((m) => (m.availability ?? "assigned") === "assigned").length}
+                </p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Unassigned</p>
+                <p className="text-xl font-semibold">
+                  {teamMembers.filter((m) => (m.availability ?? "assigned") === "unassigned").length}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Show all teams the user belongs to and their members */}
           {userTeams.length > 0 && (
             <div className="space-y-8 mt-4">
@@ -1012,25 +1124,19 @@ export default function Collaborate() {
                       </div>
                     </div>
                   </div>
-                  {team.members.length === 0 ? (
+                   {team.members.length === 0 ? (
                     <NoTeamMembersCard
                       userTeam={userTeam}
                       userTeams={userTeams}
                       onCreateTeam={() => setIsCreateTeamDialogOpen(true)}
-                      onInviteMember={() => {
-                        setActiveTeamId(team.id);
-                        setIsInviteDialogOpen(true);
-                      }}
+                      onInviteMember={() => openInviteDialog(team.id)}
                     />
                   ) : (
                     <>
                       {team.isAdmin && (
                         <div className="py-4">
-                          <Button
-                            onClick={() => {
-                              setActiveTeamId(team.id);
-                              setIsInviteDialogOpen(true);
-                            }}
+                          <Button 
+                            onClick={() => openInviteDialog(team.id)}
                             className="bg-gradient-to-r from-primary to-secondary"
                           >
                             <UserPlus className="w-4 h-4 mr-2" />
@@ -1039,32 +1145,12 @@ export default function Collaborate() {
                         </div>
                       )}
                       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 py-4">
-                        {team.members.map(member => (
-                          <div key={member.id} className="relative">
-                            <div
-                              className={`transition-all ${selectedMembers.includes(member.id) ? 'ring-2 ring-primary' : ''}`}
-                            >
-                              <TeamMemberCard
-                                member={member}
-                                onClick={handleMemberClick}
-                              />
-                            </div>
-                            <div className="absolute top-2 right-2">
-                              <input
-                                type="checkbox"
-                                checked={selectedMembers.includes(member.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedMembers([...selectedMembers, member.id]);
-                                  } else {
-                                    setSelectedMembers(selectedMembers.filter(id => id !== member.id));
-                                  }
-                                }}
-                                className="w-5 h-5 rounded cursor-pointer"
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </div>
-                          </div>
+                        {team.members.map((member) => (
+                          <TeamMemberCard
+                            key={member.id}
+                            member={member}
+                            onClick={handleMemberClick}
+                          />
                         ))}
                       </div>
                     </>
@@ -1074,24 +1160,25 @@ export default function Collaborate() {
             </div>
           )}
 
-          {teamMembers.length === 0 && (userTeams.length === 0 || userTeam) ? (
-            <NoTeamMembersCard
-              userTeam={userTeam}
-              userTeams={userTeams}
-              onCreateTeam={() => setIsCreateTeamDialogOpen(true)}
-              onInviteMember={() => setIsInviteDialogOpen(true)}
-            />
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {teamMembers.map((member) => (
-                <TeamMemberCard
-                  key={member.id}
-                  member={member}
-                  onClick={handleMemberClick}
-                />
-              ))}
-            </div>
-          )}
+          {userTeams.length === 0 &&
+            (teamMembers.length === 0 ? (
+              <NoTeamMembersCard
+                userTeam={userTeam}
+                userTeams={userTeams}
+                onCreateTeam={() => setIsCreateTeamDialogOpen(true)}
+                onInviteMember={() => openInviteDialog()}
+              />
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {teamMembers.map((member) => (
+                  <TeamMemberCard
+                    key={member.id}
+                    member={member}
+                    onClick={handleMemberClick}
+                  />
+                ))}
+              </div>
+            ))}
         </TabsContent>
 
         <TabsContent value="activity" className="space-y-4">
@@ -1121,6 +1208,28 @@ export default function Collaborate() {
                   );
                 })}
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Upload className="w-5 h-5" />
+                Files &amp; team discussions
+              </CardTitle>
+              <CardDescription>
+                Upload and share documents on discussion posts in the Team Communication Hub.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link to="/dashboard/comments?hub=files">
+                  Shared files for this event
+                </Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/dashboard/comments">Open communication hub</Link>
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

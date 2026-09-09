@@ -3,24 +3,35 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo} from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Building, Home, Utensils, MapPin, Trees, Dumbbell, Warehouse, Users, Building2, Hotel, ShoppingBag, HelpCircle, Calendar, Plus } from "lucide-react";
+import { Building, Home, Utensils, MapPin, Trees, Dumbbell, Warehouse, Users, Building2, Hotel, ShoppingBag, HelpCircle, Calendar, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { VenueFormDialog } from "@/components/venues/VenueFormDialog";
+import { formatDirectoryPrice } from "@/lib/formatDirectoryPrice";
+import { DirectoryProfileLink } from "@/components/resource-directory/DirectoryProfileLink";
+import { AddDirectoryEntryDialog } from "@/components/resource-directory/AddDirectoryEntryDialog";
+import { directoryProfileElementId } from "@/lib/directoryProfileLinks";
+import { useDirectoryProfileHighlight } from "@/hooks/useDirectoryProfileHighlight";
+import {
+  LocationFilterInput,
+  collectLocationOptions,
+  matchesLocationFilter,
+} from "@/components/resource-directory/LocationFilterInput";
 
 const VenueDirectory = () => {
   const [venueProfiles, setVenueProfiles] = useState<any[]>([]);
   const [venueTypes, setVenueTypes] = useState<any[]>([]);
   const [selectedVenueType, setSelectedVenueType] = useState<string>("");
   const [locationFilter, setLocationFilter] = useState("");
+  /** Real locations recorded in this directory, offered as searchable filter choices. */
+  const locationOptions = useMemo(() => collectLocationOptions(venueProfiles), [venueProfiles]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [isAddVenueOpen, setIsAddVenueOpen] = useState(false);
+  const { highlightClass } = useDirectoryProfileHighlight(loading);
 
   // Fetch venue profiles and types from Supabase
   useEffect(() => {
@@ -33,7 +44,7 @@ const VenueDirectory = () => {
       
       // Fetch both venues and venue types
       const results = await Promise.all([
-        supabase.from('venue_profiles').select('*'),
+        supabase.from('venues').select('*'),
         supabase.from('venue_types').select('*')
       ]);
       const venuesResponse = results[0];
@@ -72,20 +83,18 @@ const VenueDirectory = () => {
     }
   };
 
-  // Get venue type by ID
-  const getVenueTypeById = (typeId: string) => {
-    return venueTypes.find(type => type.id === typeId);
+  // Get venue type by ID (IDs may be number from DB; RadioGroup values are strings)
+  const getVenueTypeById = (typeId: string | number | undefined) => {
+    return venueTypes.find(type => String(type.id) === String(typeId));
   };
 
   // Filter profiles based on selected venue type, location, and user_id
   const filteredProfiles = venueProfiles.filter(profile => {
     const matchesUser = !profile.user_id || (user && profile.user_id === user.id);
-    const matchesType = !selectedVenueType || profile.venue_type_id === selectedVenueType;
+    const matchesType =
+      !selectedVenueType || String(profile.venue_type_id ?? "") === selectedVenueType;
     
-    const matchesLocation = !locationFilter || 
-      profile.city?.toLowerCase().includes(locationFilter.toLowerCase()) ||
-      profile.state?.toLowerCase().includes(locationFilter.toLowerCase()) ||
-      profile.zip?.toString().includes(locationFilter);
+    const matchesLocation = matchesLocationFilter(profile, locationFilter);
     
     return matchesUser && matchesType && matchesLocation;
   });
@@ -122,24 +131,42 @@ const VenueDirectory = () => {
   };
 
   const venueTypeOptions = venueTypes.map(type => ({
-    value: type.id,
+    value: String(type.id),
     label: type.name,
     icon: getIconForType(type.name)
   }));
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Venue Directory</h1>
           <p className="text-muted-foreground">
             Browse and manage event venues
           </p>
         </div>
-        <Button onClick={() => setIsAddVenueOpen(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Venue
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <AddDirectoryEntryDialog
+            title="Add Venue"
+            table="venues"
+            typeColumn="venue_type_id"
+            customColumn="custom_type"
+            typeLabel="Venue Type"
+            showCapacity
+            setUserId
+            typeOptions={venueTypes.map((t) => ({ id: t.id, name: t.name }))}
+            onCreated={fetchData}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            className="w-fit shrink-0"
+            onClick={() => navigate("/dashboard")}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Dashboard
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -148,13 +175,14 @@ const VenueDirectory = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-3">
-            <label className="text-sm font-medium">Filter by Location</label>
-            <Input
-              placeholder="Enter city, state, or zip code"
-              value={locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value)}
-              className="max-w-md"
-            />
+            <div className="max-w-md">
+              <LocationFilterInput
+                id="venue-location"
+                value={locationFilter}
+                onChange={setLocationFilter}
+                options={locationOptions}
+              />
+            </div>
           </div>
           
           <div className="space-y-3">
@@ -168,11 +196,11 @@ const VenueDirectory = () => {
                     <div key={option.value} className="relative">
                       <RadioGroupItem
                         value={option.value}
-                        id={option.value}
+                        id={`venue-type-${option.value}`}
                         className="peer sr-only"
                       />
                       <Label
-                        htmlFor={option.value}
+                        htmlFor={`venue-type-${option.value}`}
                         className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
                           isSelected
                             ? "border-primary bg-primary/5 shadow-sm"
@@ -221,7 +249,7 @@ const VenueDirectory = () => {
                 {venueTypeOptions.find(opt => opt.value === selectedVenueType)?.label || 'Venue'} ({filteredProfiles.length})
               </>
             ) : (
-              <>Venues ({filteredProfiles.length})</>
+              <>Venue Profiles ({filteredProfiles.length})</>
             )}
           </CardTitle>
         </CardHeader>
@@ -238,11 +266,17 @@ const VenueDirectory = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredProfiles.map((profile) => {
                 const venueType = getVenueTypeById(profile.venue_type_id);
-                const typeOption = venueTypeOptions.find(opt => opt.value === profile.venue_type_id);
+                const typeOption = venueTypeOptions.find(
+                  opt => opt.value === String(profile.venue_type_id ?? "")
+                );
                 const IconComponent = typeOption?.icon || HelpCircle;
                 
                 return (
-                  <Card key={profile.id || profile.created_at} className="hover:shadow-lg transition-shadow relative overflow-visible">
+                  <Card
+                    key={profile.id || profile.created_at}
+                    id={profile.id ? directoryProfileElementId(profile.id) : undefined}
+                    className={`hover:shadow-lg transition-shadow relative overflow-visible ${profile.id ? highlightClass(profile.id) : ""}`}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-center gap-2">
                         <IconComponent className="h-5 w-5 text-primary" />
@@ -255,36 +289,42 @@ const VenueDirectory = () => {
                     <CardContent className="space-y-3">
                       <div>
                         <p className="font-semibold">{profile.contact_name}</p>
-                        <p className="text-sm text-muted-foreground">{profile.email}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {profile.phone_number ? profile.phone_number : 'No phone provided'}
-                        </p>
+                        {profile.email ? (
+                          <p className="text-sm text-muted-foreground">{profile.email}</p>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">Email not provided</p>
+                        )}
                       </div>
                       
                       <div className="text-sm space-y-1">
-                        {profile.cost && (
+                        {profile.price != null && profile.price !== "" && (
                           <p className="text-primary font-semibold text-base">
-                            <strong>Cost:</strong> ${Number(profile.cost).toLocaleString()}
+                            <strong>Price:</strong>{" "}
+                            {formatDirectoryPrice(profile.price) ?? String(profile.price)}
+                          </p>
+                        )}
+                        {profile.cost != null && profile.cost !== "" && (
+                          <p className="text-primary font-semibold text-base">
+                            <strong>Cost:</strong>{" "}
+                            {formatDirectoryPrice(profile.cost) ?? String(profile.cost)}
                           </p>
                         )}
                         {profile.capacity && (
                           <p><strong>Capacity:</strong> {profile.capacity} guests</p>
                         )}
                         <p><strong>Location:</strong> {[profile.city, profile.state, profile.zip].filter(Boolean).join(', ') || 'Location not specified'}</p>
-                        {profile.amenities && profile.amenities.length > 0 && (
-                          <div>
-                            <div className="flex flex-wrap gap-1">
-                              {profile.amenities.map((amenity: string, idx: number) => (
-                                <span key={idx} className="text-xs bg-secondary text-secondary-foreground px-2 py-1 rounded">
-                                  {amenity}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        {Array.isArray(profile.amenities) && profile.amenities.length > 0 ? (
+                          <p>
+                            <strong>Amenities:</strong>{" "}
+                            {(profile.amenities as string[]).filter(Boolean).join(", ")}
+                          </p>
+                        ) : null}
                       </div>
                       
-                      <div className="pt-3 border-t mt-3">
+                      <div className="pt-3 border-t mt-3 space-y-2">
+                        {profile.id ? (
+                          <DirectoryProfileLink kind="venue" id={profile.id} className="w-full justify-center py-1.5" />
+                        ) : null}
                         <Button 
                           type="button"
                           className="w-full relative z-20 pointer-events-auto"
@@ -326,12 +366,6 @@ const VenueDirectory = () => {
           )}
         </CardContent>
       </Card>
-      <VenueFormDialog
-        open={isAddVenueOpen}
-        onOpenChange={setIsAddVenueOpen}
-        venueTypes={venueTypes}
-        onVenueAdded={() => fetchData()}
-      />
     </div>
   );
 };

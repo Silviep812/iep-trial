@@ -2,64 +2,70 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo} from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { ChefHat, Camera, Utensils, Cake, Truck, Flower, Package, Car, PersonStanding, Mail, Phone } from "lucide-react";
+import { ChefHat, Camera, Utensils, Cake, Truck, Flower, Package, Car, PersonStanding, Mail } from "lucide-react";
+import { DirectoryPageHeader } from "@/components/resource-directory/DirectoryPageHeader";
+import { AddDirectoryEntryDialog } from "@/components/resource-directory/AddDirectoryEntryDialog";
+import { useToast } from "@/hooks/use-toast";
+import { commentsPlannerCopy } from "@/lib/nudges";
+import { formatDirectoryPrice } from "@/lib/formatDirectoryPrice";
+import { DirectoryProfileLink } from "@/components/resource-directory/DirectoryProfileLink";
+import { directoryProfileElementId } from "@/lib/directoryProfileLinks";
+import { useDirectoryProfileHighlight } from "@/hooks/useDirectoryProfileHighlight";
+import {
+  LocationFilterInput,
+  collectLocationOptions,
+  matchesLocationFilter,
+} from "@/components/resource-directory/LocationFilterInput";
 
 const ServiceVendorDirectory = () => {
   const [vendorTypes, setVendorTypes] = useState<any[]>([]);
   const [vendorProfiles, setVendorProfiles] = useState<any[]>([]);
   const [selectedVendorTypes, setSelectedVendorTypes] = useState<string[]>([]);
   const [locationFilter, setLocationFilter] = useState("");
+  /** Real locations recorded in this directory, offered as searchable filter choices. */
+  const locationOptions = useMemo(() => collectLocationOptions(vendorProfiles), [vendorProfiles]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+  const { highlightClass } = useDirectoryProfileHighlight(loading);
 
-  // Fetch vendor types and profiles from Supabase
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
 
-        // Fetch vendor types
-        const { data: typesData, error: typesError } = await supabase
-          .from('vendor_supplier_types')
-          .select('*');
+      const { data: typesData, error: typesError } = await supabase
+        .from('vendor_supplier_types')
+        .select('*');
+      if (typesError) console.error('vendor_supplier_types:', typesError);
+      setVendorTypes(typesData || []);
 
-        if (typesError) throw typesError;
-
-        // Fetch vendor profiles with their types
-        const { data: profilesData, error: profilesError } = await supabase
-          .from('serv_vendor_suppliers')
-          .select(`
-            *,
-            vendor_supplier_types(*)
-          `);
-
-        if (profilesError) throw profilesError;
-
-        setVendorTypes(typesData || []);
-        setVendorProfiles(profilesData || []);
-      } catch (err: any) {
-        console.error('Error fetching data:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('vendor')
+        .select('*, vendor_supplier_types(*)');
+      if (profilesError) {
+        console.error('vendor:', profilesError);
+        toast({ title: "Service vendor profiles", description: commentsPlannerCopy.toastGeneric, variant: "destructive" });
       }
-    };
+      setVendorProfiles(profilesData || []);
+    } catch (err: any) {
+      console.error('Error fetching service vendor data:', err);
+      toast({ title: "Error", description: "Failed to load service vendor directory.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
+  useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   // Filter profiles based on selected vendor types and location
   const filteredProfiles = vendorProfiles.filter(profile => {
     const matchesType = selectedVendorTypes.length === 0 || 
       selectedVendorTypes.includes(profile.vendor_sup_type_id?.toString());
     
-    const matchesLocation = !locationFilter || 
-      profile.city?.toLowerCase().includes(locationFilter.toLowerCase()) ||
-      profile.state?.toLowerCase().includes(locationFilter.toLowerCase()) ||
-      profile.zip?.toString().includes(locationFilter);
+    const matchesLocation = matchesLocationFilter(profile, locationFilter);
     
     return matchesType && matchesLocation;
   });
@@ -100,12 +106,21 @@ const ServiceVendorDirectory = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Service Vendor Directory</h1>
-        <p className="text-muted-foreground">
-          Manage service vendors and suppliers
-        </p>
-      </div>
+      <DirectoryPageHeader
+        title="Service Vendor Directory"
+        subtitle="Select vendor type, then profile (category and location filters)"
+        action={
+          <AddDirectoryEntryDialog
+            title="Add Service Vendor"
+            table="vendor"
+            typeColumn="vendor_sup_type_id"
+            customColumn="custom_type"
+            typeLabel="Vendor Type"
+            typeOptions={vendorTypes.map((t) => ({ id: t.id, name: t.name }))}
+            onCreated={fetchData}
+          />
+        }
+      />
 
       <Card>
         <CardHeader>
@@ -114,18 +129,17 @@ const ServiceVendorDirectory = () => {
         <CardContent className="space-y-4">
           {loading ? (
             <p className="text-center py-4">Loading vendor types...</p>
-          ) : error ? (
-            <p className="text-center py-4 text-destructive">Error loading data: {error}</p>
           ) : (
             <>
               <div className="space-y-3">
-                <label className="text-sm font-medium">Filter by Location</label>
-                <Input
-                  placeholder="Enter city, state, or zip code"
-                  value={locationFilter}
-                  onChange={(e) => setLocationFilter(e.target.value)}
-                  className="max-w-md"
-                />
+                <div className="max-w-md">
+                  <LocationFilterInput
+                    id="service-vendor-location"
+                    value={locationFilter}
+                    onChange={setLocationFilter}
+                    options={locationOptions}
+                  />
+                </div>
               </div>
               
               <div className="space-y-3">
@@ -206,8 +220,6 @@ const ServiceVendorDirectory = () => {
         <CardContent>
           {loading ? (
             <p className="text-center py-8">Loading vendor profiles...</p>
-          ) : error ? (
-            <p className="text-center py-8 text-destructive">Error loading profiles: {error}</p>
           ) : filteredProfiles.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">
               No vendor profiles match your selected criteria.
@@ -219,7 +231,11 @@ const ServiceVendorDirectory = () => {
                 const IconComponent = getVendorIcon(vendorType);
                 
                 return (
-                  <Card key={profile.id} className="hover:shadow-lg transition-shadow">
+                  <Card
+                    key={profile.id}
+                    id={directoryProfileElementId(profile.id)}
+                    className={`hover:shadow-lg transition-shadow ${highlightClass(profile.id)}`}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-center gap-2">
                         <IconComponent className="h-5 w-5 text-primary" />
@@ -241,12 +257,16 @@ const ServiceVendorDirectory = () => {
                       
                       <div className="space-y-1">
                         <p className="text-sm text-muted-foreground">Email</p>
-                        <p className="text-sm">{profile.email || 'N/A'}</p>
-                      </div>
-                      
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">Phone</p>
-                        <p className="text-sm">{profile.phone_number || 'N/A'}</p>
+                        {profile.email?.trim() ? (
+                          <a
+                            href={`mailto:${String(profile.email).trim()}`}
+                            className="text-sm text-primary hover:underline break-all"
+                          >
+                            {profile.email}
+                          </a>
+                        ) : (
+                          <p className="text-sm">N/A</p>
+                        )}
                       </div>
                       
                       <div className="space-y-1">
@@ -257,7 +277,9 @@ const ServiceVendorDirectory = () => {
                       {profile.price && (
                         <div className="space-y-1">
                           <p className="text-sm text-muted-foreground">Starting Cost</p>
-                          <p className="text-lg font-bold text-primary">${profile.price}</p>
+                          <p className="text-lg font-bold text-primary">
+                            {formatDirectoryPrice(profile.price) ?? String(profile.price)}
+                          </p>
                         </div>
                       )}
                       
@@ -278,24 +300,16 @@ const ServiceVendorDirectory = () => {
                         </div>
                       )}
                       
-                      <div className="flex gap-2 mt-4">
+                      <div className="flex flex-col gap-2 mt-4">
+                        <DirectoryProfileLink kind="service_vendor" id={profile.id} className="w-full justify-center py-2 border rounded-md border-border" />
                         <Button 
-                          className="flex-1" 
+                          className="w-full" 
                           variant="outline"
                           onClick={() => window.location.href = `mailto:${profile.email || ''}`}
                           disabled={!profile.email}
                         >
                           <Mail className="h-4 w-4 mr-2" />
                           Email
-                        </Button>
-                        <Button 
-                          className="flex-1" 
-                          variant="outline"
-                          onClick={() => window.location.href = `tel:${profile.phone_number || ''}`}
-                          disabled={!profile.phone_number}
-                        >
-                          <Phone className="h-4 w-4 mr-2" />
-                          Phone
                         </Button>
                       </div>
                     </CardContent>
